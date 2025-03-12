@@ -1,2 +1,5 @@
 chromedriver
+.env
+.DS_Store
+
 *.jpg
