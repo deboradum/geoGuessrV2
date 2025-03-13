@@ -149,9 +149,9 @@ def get_coords(logs):
         print(data)
 
         location = data["location"]
-        known_coords[panoidID] = (location["lat"], location["lng"])
+        known_coords[panoidID] = (location["lat"], location["lng"], panoidID)
 
-        return location["lat"], location["lng"]
+        return location["lat"], location["lng"], panoidID
 
     except requests.exceptions.RequestException as e:
         print(f"Request error: {e}")
@@ -175,41 +175,40 @@ def do_country(directory, country, num_locations):
         logs = browser.get_log("performance")
         image_urls = get_image_urls(logs)
         try:
-            lat, lng = get_coords(logs)
+            lat, lng, panoidID = get_coords(logs)
         except Exception as e:
             print("Error getting coords:", e)
             continue
         to_download = [url for url in image_urls if url not in dont_download_urls]
 
         print(f"Downloading {len(to_download)} new images")
-        location_key = random_string()
         with open(os.path.join(directory, "locations.csv"), "a+") as file:
-            file.write(f"{location_key},{lat},{lng}\n")
-        download_images(to_download, location_key, directory)
+            file.write(f"{panoidID},{lat},{lng}\n")
+        download_images(to_download, panoidID, directory)
         dont_download_urls.update(to_download)
 
 
 if __name__ == "__main__":
     todo = [
-        # ("au", "australia"),
-        # ("ar", "argentina"),
-        # ("bd", "bangladesh"),
-        # ("be", "belgium"),
-        # ("bw", "botswana"),
-        # ("br", "brazil"),
-        # ("bg", "bulgaria"),
-        # ("kh", "cambodia"),
-        # ("ca", "canada"),
-        # ("cl", "chile"),
-        # ("hr", "croatia"),
-        # ("co", "colombia"),
-        # ("cz", "czechia"),
-        # ("dk", "denmark"),
-        # ("ae", "dubai"),
-        # ("ee", "estonia"),
-        # ("fi", "finland"),
-        # ("fr", "france"),
-        # ("de", "germany"),
+        ("au", "australia"),
+        ("ar", "argentina"),
+        ("bd", "bangladesh"),
+        ("be", "belgium"),
+        ("bw", "botswana"),
+        ("br", "brazil"),
+        ("bg", "bulgaria"),
+        ("kh", "cambodia"),
+        ("ca", "canada"),
+        ("cl", "chile"),
+        ("hr", "croatia"),
+        ("co", "colombia"),
+        ("cz", "czechia"),
+        ("dk", "denmark"),
+        ("ae", "dubai"),
+        ("ee", "estonia"),
+        ("fi", "finland"),
+        ("fr", "france"),
+        ("de", "germany"),
         ("gr", "greece"),
         ("hu", "hungary"),
         ("hk", "hongkong"),
@@ -250,9 +249,10 @@ if __name__ == "__main__":
 
     try:
         for country, directory in todo:
+            directory = f"dataset/{directory}"
             os.makedirs(directory, exist_ok=True)
             try:
-                do_country(directory, country, 50)
+                do_country(directory, country, 150)
             except Exception as e:
                 print(e)
     finally:
