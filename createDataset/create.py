@@ -158,34 +158,102 @@ def get_coords(logs):
         raise e
 
 
-if __name__ == "__main__":
-    country = "co"
-    directory = "colombia"
-    os.makedirs(directory, exist_ok=True)
-    try:
-        browser.get(f"https://randomstreetview.com/{country}")
-        WebDriverWait(browser, 10).until(EC.presence_of_element_located((By.ID, "next")))
+def do_country(directory, country, num_locations):
+    browser.get(f"https://randomstreetview.com/{country}")
+    WebDriverWait(browser, 10).until(EC.presence_of_element_located((By.ID, "next")))
 
-        dont_download_urls = set()
+    dont_download_urls = set()
+    logs = browser.get_log("performance")
+    image_urls = get_image_urls(logs)
+    dont_download_urls.update(image_urls)
+
+    accept_cookies()
+
+    for _ in range(num_locations):
+        goto_next_location()
+
         logs = browser.get_log("performance")
         image_urls = get_image_urls(logs)
-        dont_download_urls.update(image_urls)
-
-        accept_cookies()
-
-        for _ in range(89):
-            goto_next_location()
-
-            logs = browser.get_log("performance")
-            image_urls = get_image_urls(logs)
+        try:
             lat, lng = get_coords(logs)
-            to_download = [url for url in image_urls if url not in dont_download_urls]
+        except Exception as e:
+            print("Error getting coords:", e)
+            continue
+        to_download = [url for url in image_urls if url not in dont_download_urls]
 
-            print(f"Downloading {len(to_download)} new images")
-            location_key = random_string()
-            with open(os.path.join(directory, "locations.csv"), "a+") as file:
-                file.write(f"{location_key},{lat},{lng}\n")
-            download_images(to_download, location_key, directory)
-            dont_download_urls.update(to_download)
+        print(f"Downloading {len(to_download)} new images")
+        location_key = random_string()
+        with open(os.path.join(directory, "locations.csv"), "a+") as file:
+            file.write(f"{location_key},{lat},{lng}\n")
+        download_images(to_download, location_key, directory)
+        dont_download_urls.update(to_download)
+
+
+if __name__ == "__main__":
+    todo = [
+        # ("au", "australia"),
+        # ("ar", "argentina"),
+        # ("bd", "bangladesh"),
+        # ("be", "belgium"),
+        # ("bw", "botswana"),
+        # ("br", "brazil"),
+        # ("bg", "bulgaria"),
+        # ("kh", "cambodia"),
+        # ("ca", "canada"),
+        # ("cl", "chile"),
+        # ("hr", "croatia"),
+        # ("co", "colombia"),
+        # ("cz", "czechia"),
+        # ("dk", "denmark"),
+        # ("ae", "dubai"),
+        # ("ee", "estonia"),
+        # ("fi", "finland"),
+        # ("fr", "france"),
+        # ("de", "germany"),
+        ("gr", "greece"),
+        ("hu", "hungary"),
+        ("hk", "hongkong"),
+        ("is", "iceland"),
+        ("id", "indonesia"),
+        ("ie", "ireland"),
+        ("it", "italy"),
+        ("il", "israel"),
+        ("il", "israel"),
+        ("jp", "japan"),
+        ("lv", "latvia"),
+        ("lt", "lithuania"),
+        ("my", "malaysia"),
+        ("mx", "mexico"),
+        ("nl", "netherlands"),
+        ("nz", "newzealand"),
+        ("no", "norway"),
+        ("pe", "peru"),
+        ("pl", "poland"),
+        ("pt", "portugal"),
+        ("ro", "romania"),
+        ("ru", "russia"),
+        ("sg", "singapore"),
+        ("sk", "slovakia"),
+        ("si", "slovenia"),
+        ("za", "southafrica"),
+        ("kr", "southkorea"),
+        ("es", "spain"),
+        ("sz", "swaziland"),
+        ("se", "sweden"),
+        ("ch", "switzerland"),
+        ("tw", "taiwan"),
+        ("th", "thailand"),
+        ("ua", "ukraine"),
+        ("gb", "unitedkingdom"),
+        ("us", "usa"),
+    ]
+
+    try:
+        for country, directory in todo:
+            os.makedirs(directory, exist_ok=True)
+            try:
+                do_country(directory, country, 50)
+            except Exception as e:
+                print(e)
     finally:
         browser.quit()
