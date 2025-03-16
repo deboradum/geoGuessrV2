@@ -1,5 +1,6 @@
 import os
 import torch
+import time
 import wandb
 import torchvision
 
@@ -188,7 +189,7 @@ def geoguessr_loss(pred, truth):
 
     # Loss v3
     log_distance = torch.log1p(distance)
-    max_log_distance = torch.log1p(MAX_DISTANCE)
+    max_log_distance = torch.log1p(torch.tensor(MAX_DISTANCE, device=device))
     log_distance_normalized = log_distance / max_log_distance
     loss = log_distance_normalized.mean()
 
@@ -214,6 +215,7 @@ def evaluate(net, loader, loss_fn):
 
 def train(net, optimizer, epochs, train_loader, eval_loader, test_loader, loss_fn):
     for e in range(epochs):
+        s = time.time()
         global_step = e * len(train_loader.dataset)  # Num training examples
         net.train()
         for X, y in train_loader:
@@ -229,7 +231,8 @@ def train(net, optimizer, epochs, train_loader, eval_loader, test_loader, loss_f
             global_step += X.size(0)
             wandb.log({"train_loss": loss.item(), "step": global_step})
         val_loss = evaluate(net, eval_loader, loss_fn)
-        print(f"Epoch {e} finished, val loss: {round(val_loss, 4)}")
+        took = round(time.time() - s, 3)
+        print(f"Epoch {e} finished, val loss: {round(val_loss, 4)}, took {took}s")
         wandb.log({"eval_loss": val_loss, "epoch": e})
 
     return evaluate(net, test_loader, loss_fn)
