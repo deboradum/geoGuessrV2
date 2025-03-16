@@ -2,7 +2,9 @@ chromedriver
 .env
 .DS_Store
 locations.csv
+cookies.txt
 
 *.jpg
+*.png
 
 __pycache__
