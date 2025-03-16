@@ -160,7 +160,7 @@ def next_round(counter):
         time.sleep(6)
         pyautogui.press("space")
     simulate_mouse_click(CENTER_X, CENTER_Y)
-    time.sleep(1)  # Wait for next round
+    time.sleep(2)  # Wait for next round
 
 
 if __name__ == "__main__":
@@ -184,7 +184,7 @@ if __name__ == "__main__":
 
             num_existing_screens, screenshot_path = take_screenshot(dataset_dir, panoidID)
 
-            with open(f"{dataset_dir}/locations.csv", "a+") as f:
+            with open(f"{dataset_dir}/anUrbanWorld.csv", "a+") as f:
                 f.write(f"{panoidID},{lat},{lon}\n")
 
             next_round(counter)
