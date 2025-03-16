@@ -34,6 +34,33 @@ def get_all_coords(dataset_dir):
     return coords
 
 
+def get_all_coords_geoguessrdataset(dataset_dir):
+    coords = []
+    for file in os.listdir(dataset_dir):
+        if not file.endswith(".csv"):
+            continue
+
+        location_data = pd.read_csv(
+            f"{dataset_dir}/{file}",
+            header=None,
+            names=["panoidID", "lat", "lng"],
+        ).drop_duplicates(subset="panoidID", keep="first")
+        location_dict = location_data.set_index("panoidID")[["lat", "lng"]].to_dict(
+            orient="index"
+        )
+        location_dict = {k: (v["lat"], v["lng"]) for k, v in location_dict.items()}
+
+    for img_path in os.listdir(dataset_dir):
+        match = re.match(r"^(.*?)\.png$", img_path)
+        if not match:
+            continue
+        panoidID = match.group(1)
+        lat, lng = location_dict[panoidID]
+        coords.append((lat, lng))
+
+    return coords
+
+
 def get_country_data(dataset_dir):
     country_data = []
     for country in os.listdir(dataset_dir):
@@ -74,8 +101,8 @@ def plot_country_distribution(country_data):
 
 
 if __name__ == "__main__":
-    # coords = get_all_coords("dataset/")
-    # plot_heatmap(coords)
+    coords = get_all_coords_geoguessrdataset("geoGuessrDataset")
+    plot_heatmap(coords)
 
-    country_data = get_country_data("dataset/")
-    plot_country_distribution(country_data)
+    # country_data = get_country_data("dataset/")
+    # plot_country_distribution(country_data)
