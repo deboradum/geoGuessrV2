@@ -101,11 +101,11 @@ def get_efficientnet(net_name, dropout_rate):
 
 def get_net(net_name="resnet50", dropout_rate=0.5):
     if "resnet" in net_name:
-        return get_resnet(net_name, dropout_rate)
+        return get_resnet(net_name, dropout_rate).to(device)
     elif "vit" in net_name:
-        return get_vit(net_name, dropout_rate)
+        return get_vit(net_name, dropout_rate).to(device)
     elif "efficientnet" in net_name:
-        return get_efficientnet(net_name, dropout_rate)
+        return get_efficientnet(net_name, dropout_rate).to(device)
     else:
         print(f"{net_name} not supported")
         exit(0)
@@ -174,17 +174,19 @@ def geoguessr_loss(pred, truth):
     # Calculate GeoGuessr score
     scaling_factor = 2000
     score = 5000 * torch.exp(-distance / scaling_factor)
+    loss = torch.mean(-torch.log(score + 1e-9))
 
-    return torch.mean(-score)
+    return loss
 
 
 def evaluate(net, loader, loss_fn):
     net.eval()
     val_loss = 0.0
     with torch.no_grad():
-        for X_val, y_val in loader:
-            out_val = net(X_val)
-            loss_val = loss_fn(out_val, y_val)
+        for X, y in loader:
+            X, y = X.to(device), y.to(device)
+            out_val = net(X)
+            loss_val = loss_fn(out_val, y)
             val_loss += loss_val.item()
     val_loss /= len(loader)
 
@@ -196,6 +198,7 @@ def train(net, optimizer, epochs, train_loader, eval_loader, test_loader, loss_f
         global_step = e * len(train_loader.dataset)  # Num training examples
         net.train()
         for X, y in train_loader:
+            X, y = X.to(device), y.to(device)
             optimizer.zero_grad()
             out = net(X)  # B, 2
             loss = loss_fn(out, y)
@@ -220,7 +223,7 @@ def wandb_train():
     dropout = config.dropout
     epochs = config.epochs
 
-    print(f"Training {net_name}, lr={lr}, bs={bs}, dropout={dropout}")
+    print(f"Training {net_name} on {device}, lr={lr}, bs={bs}, dropout={dropout}")
 
     net = get_net(net_name, dropout)
 
@@ -263,12 +266,7 @@ if __name__ == "__main__":
                 "min": 0,
                 "max": 0.1,
             },
-            "batch_size": {
-                "distribution": "q_log_uniform_values",
-                "q": 8,
-                "min": 16,
-                "max": 256,
-            },
+            "batch_size": {"value": 32},
         },
     }
 
