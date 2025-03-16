@@ -111,10 +111,12 @@ def get_net(net_name="resnet50", dropout_rate=0.5):
         exit(0)
 
 
-def get_loaders(batch_size, directory="createDataset/dataset/"):
+def get_loaders(batch_size, model_name, directory="createDataset/dataset/"):
     transform = transforms.Compose(
         [
-            transforms.Resize((224, 224)),  # TODO: resize for specifc model
+            transforms.Resize((240, 240))
+            if "efficientnet" in model_name
+            else transforms.Resize((224, 224)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
@@ -218,12 +220,14 @@ def wandb_train():
     dropout = config.dropout
     epochs = config.epochs
 
+    print(f"Training {net_name}, lr={lr}, bs={bs}, dropout={dropout}")
+
     net = get_net(net_name, dropout)
 
     optimizer = torch.optim.Adam(net.parameters(), lr=lr)
 
     train_loader, eval_loader, test_loader = get_loaders(
-        bs, directory="createDataset/dataset/"
+        bs, net_name, directory="createDataset/dataset/"
     )
 
     test_loss = train(
