@@ -45,6 +45,7 @@ def get_resnet(resnet, dropout_rate):
     net.fc = torch.nn.Sequential(
         torch.nn.Dropout(dropout_rate),
         torch.nn.Linear(net.fc.in_features, NUM_CLASSES),
+        torch.nn.Tanh(),
     )
     torch.nn.init.xavier_uniform_(net.fc[1].weight)
 
@@ -70,6 +71,7 @@ def get_vit(net_name, dropout_rate):
     net.heads.head = torch.nn.Sequential(
         torch.nn.Dropout(dropout_rate),
         torch.nn.Linear(net.heads.head.in_features, NUM_CLASSES),
+        torch.nn.Tanh(),
     )
     torch.nn.init.xavier_uniform_(net.heads.head[1].weight)
 
@@ -92,7 +94,10 @@ def get_efficientnet(net_name, dropout_rate):
 
     net = efficientnet_model(weights=weights)
 
-    net.classifier[1] = torch.nn.Linear(net.classifier[1].in_features, NUM_CLASSES)
+    net.classifier[1] = torch.nn.Sequential(
+        torch.nn.Linear(net.classifier[1].in_features, NUM_CLASSES),
+        torch.nn.Tanh(),
+    )
     net.classifier.add_module("dropout", torch.nn.Dropout(dropout_rate))
     torch.nn.init.xavier_uniform_(net.classifier[1].weight)
 
@@ -185,9 +190,12 @@ def evaluate(net, loader, loss_fn):
     with torch.no_grad():
         for X, y in loader:
             X, y = X.to(device), y.to(device)
-            out_val = net(X)
-            loss_val = loss_fn(out_val, y)
-            val_loss += loss_val.item()
+            out = net(X)
+            out_lat = out[:, 0] * 90  # Scale latitude to [-90, 90]
+            out_lon = out[:, 1] * 180  # Scale longitude to [-180, 180]
+            out_scaled = torch.stack([out_lat, out_lon], dim=1)
+            loss = loss_fn(out_scaled, y)
+            val_loss += loss.item()
     val_loss /= len(loader)
 
     return val_loss
@@ -201,7 +209,10 @@ def train(net, optimizer, epochs, train_loader, eval_loader, test_loader, loss_f
             X, y = X.to(device), y.to(device)
             optimizer.zero_grad()
             out = net(X)  # B, 2
-            loss = loss_fn(out, y)
+            out_lat = out[:, 0] * 90  # Scale latitude to [-90, 90]
+            out_lon = out[:, 1] * 180  # Scale longitude to [-180, 180]
+            out_scaled = torch.stack([out_lat, out_lon], dim=1)
+            loss = loss_fn(out_scaled, y)
             loss.backward()
             optimizer.step()
             global_step += X.size(0)
@@ -249,14 +260,14 @@ if __name__ == "__main__":
                     "resnet18",
                     "resnet34",
                     "resnet50",
-                    "resnet101",
-                    "resnet152",
+                    #"resnet101",
+                    #"resnet152",
                     "vit_b_16",
                     "vit_b_32",
-                    "vit_l_16",
+                    #"vit_l_16",
                     "efficientnet_b0",
                     "efficientnet_b1",
-                    "efficientnet_b2",
+                    #"efficientnet_b2",
                 ]
             },
             "dropout": {"values": [0.3, 0.4, 0.5, 0.6]},
@@ -266,7 +277,7 @@ if __name__ == "__main__":
                 "min": 0,
                 "max": 0.1,
             },
-            "batch_size": {"value": 32},
+            "batch_size": {"value": 64},
         },
     }
 
