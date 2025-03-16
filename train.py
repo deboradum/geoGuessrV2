@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 from dataset import GeoGuessrDataset
 
 EARTH_RADIUS = 6371000
+MAX_DISTANCE = 20000000.0
 NUM_CLASSES = 2
 
 device = torch.device(
@@ -175,12 +176,21 @@ def geoguessr_loss(pred, truth):
     )  # B, 1
     c = 2 * torch.atan2(torch.sqrt(a), torch.sqrt(1 - a))  # B, 1
     distance = EARTH_RADIUS * c  # B, 1
-    loss = distance.mean()
 
+    # Loss v1
     # # Calculate GeoGuessr score
     # scaling_factor = 2000
     # score = 5000 * torch.exp(-distance / scaling_factor)
     # loss = torch.mean(-torch.log(score + 1e-9))
+
+    # Loss v2
+    # loss = distance.mean()
+
+    # Loss v3
+    log_distance = torch.log1p(distance)
+    max_log_distance = torch.log1p(MAX_DISTANCE)
+    log_distance_normalized = log_distance / max_log_distance
+    loss = log_distance_normalized.mean()
 
     return loss
 
@@ -218,8 +228,8 @@ def train(net, optimizer, epochs, train_loader, eval_loader, test_loader, loss_f
             optimizer.step()
             global_step += X.size(0)
             wandb.log({"train_loss": loss.item(), "step": global_step})
-        print("Epoch {e} finished, val loss: {round(val_loss, 4)}")
         val_loss = evaluate(net, eval_loader, loss_fn)
+        print(f"Epoch {e} finished, val loss: {round(val_loss, 4)}")
         wandb.log({"eval_loss": val_loss, "epoch": e})
 
     return evaluate(net, test_loader, loss_fn)
