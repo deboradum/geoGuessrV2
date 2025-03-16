@@ -99,7 +99,7 @@ def get_efficientnet(net_name, dropout_rate):
         torch.nn.Tanh(),
     )
     net.classifier.add_module("dropout", torch.nn.Dropout(dropout_rate))
-    torch.nn.init.xavier_uniform_(net.classifier[1].weight)
+    torch.nn.init.xavier_uniform_(net.classifier[1][0].weight)
 
     return net
 
@@ -175,11 +175,12 @@ def geoguessr_loss(pred, truth):
     )  # B, 1
     c = 2 * torch.atan2(torch.sqrt(a), torch.sqrt(1 - a))  # B, 1
     distance = EARTH_RADIUS * c  # B, 1
+    loss = distance.mean()
 
-    # Calculate GeoGuessr score
-    scaling_factor = 2000
-    score = 5000 * torch.exp(-distance / scaling_factor)
-    loss = torch.mean(-torch.log(score + 1e-9))
+    # # Calculate GeoGuessr score
+    # scaling_factor = 2000
+    # score = 5000 * torch.exp(-distance / scaling_factor)
+    # loss = torch.mean(-torch.log(score + 1e-9))
 
     return loss
 
@@ -217,7 +218,7 @@ def train(net, optimizer, epochs, train_loader, eval_loader, test_loader, loss_f
             optimizer.step()
             global_step += X.size(0)
             wandb.log({"train_loss": loss.item(), "step": global_step})
-
+        print("Epoch {e} finished, val loss: {round(val_loss, 4)}")
         val_loss = evaluate(net, eval_loader, loss_fn)
         wandb.log({"eval_loss": val_loss, "epoch": e})
 
