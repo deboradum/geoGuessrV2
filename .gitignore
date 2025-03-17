@@ -6,5 +6,7 @@ cookies.txt
 
 *.jpg
 *.png
+*.pth
 
 __pycache__
+wandb*
