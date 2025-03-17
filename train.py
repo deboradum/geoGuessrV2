@@ -6,7 +6,7 @@ import torchvision
 
 from torchvision import transforms
 from torch.utils.data import DataLoader
-
+import torch.nn.functional as F
 from dataset import GeoGuessrDataset
 
 EARTH_RADIUS = 6371000
@@ -47,7 +47,6 @@ def get_resnet(resnet, dropout_rate):
     net.fc = torch.nn.Sequential(
         torch.nn.Dropout(dropout_rate),
         torch.nn.Linear(net.fc.in_features, NUM_CLASSES),
-        torch.nn.Tanh(),
     )
     torch.nn.init.xavier_uniform_(net.fc[1].weight)
 
@@ -73,7 +72,6 @@ def get_vit(net_name, dropout_rate):
     net.heads.head = torch.nn.Sequential(
         torch.nn.Dropout(dropout_rate),
         torch.nn.Linear(net.heads.head.in_features, NUM_CLASSES),
-        torch.nn.Tanh(),
     )
     torch.nn.init.xavier_uniform_(net.heads.head[1].weight)
 
@@ -96,12 +94,9 @@ def get_efficientnet(net_name, dropout_rate):
 
     net = efficientnet_model(weights=weights)
 
-    net.classifier[1] = torch.nn.Sequential(
-        torch.nn.Linear(net.classifier[1].in_features, NUM_CLASSES),
-        torch.nn.Tanh(),
-    )
+    net.classifier[1] = torch.nn.Linear(net.classifier[1].in_features, NUM_CLASSES)
     net.classifier.add_module("dropout", torch.nn.Dropout(dropout_rate))
-    torch.nn.init.xavier_uniform_(net.classifier[1][0].weight)
+    torch.nn.init.xavier_uniform_(net.classifier[1].weight)
 
     return net
 
@@ -131,10 +126,10 @@ def get_loaders(batch_size, model_name, directory="createDataset/dataset/"):
 
     datasets = {
         "train": GeoGuessrDataset(
-            os.path.join(directory, "train.csv"), directory, transform
+            os.path.join(directory, "overfit.csv"), directory, transform
         ),
         "val": GeoGuessrDataset(
-            os.path.join(directory, "val.csv"), directory, transform
+            os.path.join(directory, "overfit.csv"), directory, transform
         ),
         "test": GeoGuessrDataset(
             os.path.join(directory, "test.csv"), directory, transform
@@ -165,18 +160,18 @@ def get_logging_dir(directory="runs/"):
 
 def geoguessr_loss(pred, truth):
     # Calculate distance
-    phi_pred = torch.deg2rad(pred[:, 0])  # B, 1
-    phi_truth = torch.deg2rad(truth[:, 0])  # B, 1
-    delta_phi = torch.deg2rad(truth[:, 0] - pred[:, 0])  # B, 1
-    delta_lambda = torch.deg2rad(truth[:, 1] - pred[:, 1])  # B, 1
-    a = (
-        torch.sin(delta_phi / 2.0) ** 2
-        + torch.cos(phi_pred)
-        * torch.cos(phi_truth)
-        * torch.sin(delta_lambda / 2.0) ** 2
-    )  # B, 1
-    c = 2 * torch.atan2(torch.sqrt(a), torch.sqrt(1 - a))  # B, 1
-    distance = EARTH_RADIUS * c  # B, 1
+    #phi_pred = torch.deg2rad(pred[:, 0])  # B, 1
+    #phi_truth = torch.deg2rad(truth[:, 0])  # B, 1
+    #delta_phi = torch.deg2rad(truth[:, 0] - pred[:, 0])  # B, 1
+    #delta_lambda = torch.deg2rad(truth[:, 1] - pred[:, 1])  # B, 1
+    #a = (
+    #    torch.sin(delta_phi / 2.0) ** 2
+    #    + torch.cos(phi_pred)
+    #    * torch.cos(phi_truth)
+    #    * torch.sin(delta_lambda / 2.0) ** 2
+    #)  # B, 1
+    #c = 2 * torch.atan2(torch.sqrt(a), torch.sqrt(1 - a))  # B, 1
+    #distance = EARTH_RADIUS * c  # B, 1
 
     # Loss v1
     # # Calculate GeoGuessr score
@@ -185,13 +180,16 @@ def geoguessr_loss(pred, truth):
     # loss = torch.mean(-torch.log(score + 1e-9))
 
     # Loss v2
-    # loss = distance.mean()
+    #loss = distance.mean()
 
     # Loss v3
-    log_distance = torch.log1p(distance)
-    max_log_distance = torch.log1p(torch.tensor(MAX_DISTANCE, device=device))
-    log_distance_normalized = log_distance / max_log_distance
-    loss = log_distance_normalized.mean()
+    #log_distance = torch.log1p(distance)
+    #max_log_distance = torch.log1p(torch.tensor(MAX_DISTANCE, device=device))
+    #log_distance_normalized = log_distance / max_log_distance
+    #loss = log_distance_normalized.mean()
+
+    # Loss V4
+    loss = F.mse_loss(pred, truth, reduction="none").mean(dim=1).mean()
 
     return loss
 
@@ -244,15 +242,16 @@ def wandb_train():
 
     net_name = config.net_name
     lr = config.learning_rate
+    wd = config.weight_decay
     bs = config.batch_size
     dropout = config.dropout
     epochs = config.epochs
 
-    print(f"Training {net_name} on {device}, lr={lr}, bs={bs}, dropout={dropout}")
+    print(f"Training {net_name} on {device}, lr={lr}, weight_decay={wd}, bs={bs}, dropout={dropout}")
 
     net = get_net(net_name, dropout)
 
-    optimizer = torch.optim.Adam(net.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=wd)
 
     train_loader, eval_loader, test_loader = get_loaders(
         bs, net_name, directory="createDataset/dataset/"
@@ -284,16 +283,22 @@ if __name__ == "__main__":
                     #"efficientnet_b2",
                 ]
             },
-            "dropout": {"values": [0.3, 0.4, 0.5, 0.6]},
-            "epochs": {"value": 5},
+            #"dropout": {"values": [0.3, 0.4, 0.5, 0.6]},
+            "dropout": {"values": [0.1, 0.2]},
+            "epochs": {"value": 20},
             "learning_rate": {
-                "distribution": "uniform",
-                "min": 0,
-                "max": 0.1,
+                "distribution": "log_uniform_values",
+                "min": 1e-5,
+                "max": 5e-3,
+            },
+            "weight_decay": {
+                "distribution": "log_uniform_values",
+                "min": 1e-6,
+                "max": 1e-3,
             },
             "batch_size": {"value": 64},
         },
     }
 
     sweep_id = wandb.sweep(sweep_config, project="GeoGuessr")
-    wandb.agent(sweep_id, wandb_train, count=10)
+    wandb.agent(sweep_id, wandb_train, count=100)
