@@ -48,7 +48,7 @@ def get_resnet(resnet, dropout_rate):
         torch.nn.Dropout(dropout_rate),
         torch.nn.Linear(net.fc.in_features, NUM_CLASSES),
     )
-    torch.nn.init.xavier_uniform_(net.fc[1].weight)
+    torch.nn.init.kaiming_uniform_(net.fc[1].weight)
 
     return net
 
@@ -73,7 +73,7 @@ def get_vit(net_name, dropout_rate):
         torch.nn.Dropout(dropout_rate),
         torch.nn.Linear(net.heads.head.in_features, NUM_CLASSES),
     )
-    torch.nn.init.xavier_uniform_(net.heads.head[1].weight)
+    torch.nn.init.kaiming_uniform_(net.heads.head[1].weight)
 
     return net
 
@@ -96,7 +96,7 @@ def get_efficientnet(net_name, dropout_rate):
 
     net.classifier[1] = torch.nn.Linear(net.classifier[1].in_features, NUM_CLASSES)
     net.classifier.add_module("dropout", torch.nn.Dropout(dropout_rate))
-    torch.nn.init.xavier_uniform_(net.classifier[1].weight)
+    torch.nn.init.kaiming_uniform_(net.classifier[1].weight)
 
     return net
 
