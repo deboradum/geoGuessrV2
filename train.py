@@ -237,7 +237,7 @@ def train(net, optimizer, epochs, train_loader, eval_loader, test_loader, loss_f
 
 
 def wandb_train():
-    wandb.init(tags=["geoguessr_score"])
+    wandb.init()
     config = wandb.config
 
     net_name = config.net_name
@@ -273,19 +273,18 @@ if __name__ == "__main__":
                     "resnet18",
                     "resnet34",
                     "resnet50",
-                    #"resnet101",
-                    #"resnet152",
+                    "resnet101",
+                    "resnet152",
                     "vit_b_16",
                     "vit_b_32",
-                    #"vit_l_16",
+                    "vit_l_16",
                     "efficientnet_b0",
                     "efficientnet_b1",
-                    #"efficientnet_b2",
+                    "efficientnet_b2",
                 ]
             },
-            #"dropout": {"values": [0.3, 0.4, 0.5, 0.6]},
-            "dropout": {"values": [0.1, 0.2]},
-            "epochs": {"value": 20},
+            "dropout": {"values": [0.3, 0.4, 0.5, 0.6]},
+            "epochs": {"value": 3},
             "learning_rate": {
                 "distribution": "log_uniform_values",
                 "min": 1e-5,
