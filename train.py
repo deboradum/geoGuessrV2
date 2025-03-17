@@ -4,6 +4,7 @@ import time
 import wandb
 import torchvision
 
+from tqdm import tqdm
 from torchvision import transforms
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
@@ -121,6 +122,7 @@ def get_loaders(batch_size, model_name, directory="createDataset/dataset/"):
             else transforms.Resize((224, 224)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            transforms.RandomHorizontalFlip(),
         ]
     )
 
@@ -212,11 +214,13 @@ def evaluate(net, loader, loss_fn):
 
 
 def train(net, optimizer, epochs, train_loader, eval_loader, test_loader, loss_fn):
+    val_loss = evaluate(net, eval_loader, loss_fn)
+    wandb.log({"eval_loss": val_loss})
     for e in range(epochs):
         s = time.time()
         global_step = e * len(train_loader.dataset)  # Num training examples
         net.train()
-        for X, y in train_loader:
+        for X, y in tqdm(train_loader, desc=f"Training epoch {e}"):
             X, y = X.to(device), y.to(device)
             optimizer.zero_grad()
             out = net(X)  # B, 2
@@ -284,7 +288,7 @@ if __name__ == "__main__":
                 ]
             },
             "dropout": {"values": [0.3, 0.4, 0.5, 0.6]},
-            "epochs": {"value": 3},
+            "epochs": {"value": 4},
             "learning_rate": {
                 "distribution": "log_uniform_values",
                 "min": 1e-5,
