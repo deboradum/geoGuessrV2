@@ -126,10 +126,10 @@ def get_loaders(batch_size, model_name, directory="createDataset/dataset/"):
 
     datasets = {
         "train": GeoGuessrDataset(
-            os.path.join(directory, "overfit.csv"), directory, transform
+            os.path.join(directory, "train.csv"), directory, transform
         ),
         "val": GeoGuessrDataset(
-            os.path.join(directory, "overfit.csv"), directory, transform
+            os.path.join(directory, "val.csv"), directory, transform
         ),
         "test": GeoGuessrDataset(
             os.path.join(directory, "test.csv"), directory, transform
@@ -174,10 +174,10 @@ def geoguessr_loss(pred, truth):
     #distance = EARTH_RADIUS * c  # B, 1
 
     # Loss v1
-    # # Calculate GeoGuessr score
-    # scaling_factor = 2000
-    # score = 5000 * torch.exp(-distance / scaling_factor)
-    # loss = torch.mean(-torch.log(score + 1e-9))
+    # Calculate GeoGuessr score
+    #scaling_factor = 2000000
+    #score = 5000 * torch.exp(-distance / scaling_factor)
+    #loss = torch.mean(-torch.log(score + 1e-9))
 
     # Loss v2
     #loss = distance.mean()
@@ -237,7 +237,7 @@ def train(net, optimizer, epochs, train_loader, eval_loader, test_loader, loss_f
 
 
 def wandb_train():
-    wandb.init()
+    wandb.init(tags=["geoguessr_score"])
     config = wandb.config
 
     net_name = config.net_name
