@@ -250,12 +250,18 @@ def wandb_train():
     bs = config.batch_size
     dropout = config.dropout
     epochs = config.epochs
+    optim = config.optimizer
 
     print(f"Training {net_name} on {device}, lr={lr}, weight_decay={wd}, bs={bs}, dropout={dropout}")
 
     net = get_net(net_name, dropout)
 
-    optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=wd)
+    if optim == "adam":
+        optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=wd)
+    elif optim == "adamW":
+        optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=wd)
+    else:
+        raise Exception("Invalid optimizer")
 
     train_loader, eval_loader, test_loader = get_loaders(
         bs, net_name, directory="createDataset/dataset/"
@@ -278,30 +284,36 @@ if __name__ == "__main__":
                     "resnet34",
                     "resnet50",
                     "resnet101",
-                    "resnet152",
+                    #"resnet152",
                     "vit_b_16",
                     "vit_b_32",
-                    "vit_l_16",
+                    #"vit_l_16",
                     "efficientnet_b0",
                     "efficientnet_b1",
-                    "efficientnet_b2",
+                    #"efficientnet_b2",
+                ]
+            },
+            "optimizer": {
+                "values": [
+                    "adam",
+                    "adamW",
                 ]
             },
             "dropout": {"values": [0.3, 0.4, 0.5, 0.6]},
             "epochs": {"value": 4},
             "learning_rate": {
                 "distribution": "log_uniform_values",
-                "min": 1e-5,
-                "max": 5e-3,
+                "min": 1e-4,
+                "max": 5e-2,
             },
             "weight_decay": {
                 "distribution": "log_uniform_values",
-                "min": 1e-6,
-                "max": 1e-3,
+                "min": 1e-4,
+                "max": 1e-2,
             },
             "batch_size": {"value": 64},
         },
     }
 
     sweep_id = wandb.sweep(sweep_config, project="GeoGuessr")
-    wandb.agent(sweep_id, wandb_train, count=100)
+    wandb.agent(sweep_id, wandb_train, count=5)
