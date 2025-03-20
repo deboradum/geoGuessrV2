@@ -1,18 +1,18 @@
-import os
-import torch
 import time
+import torch
 import wandb
-import torchvision
+import argparse
+
+import torch.nn.functional as F
 
 from tqdm import tqdm
-from torchvision import transforms
-from torch.utils.data import DataLoader
-import torch.nn.functional as F
-from dataset import GeoGuessrDataset
+from models import get_net
+from dataset import get_loaders_googleMaps, get_loaders_geoGuessr
+
 
 EARTH_RADIUS = 6371000
 MAX_DISTANCE = 20000000.0
-NUM_CLASSES = 2
+
 
 device = torch.device(
     "mps"
@@ -21,143 +21,6 @@ device = torch.device(
     if torch.cuda.is_available()
     else "cpu"
 )
-
-
-def get_resnet(resnet, dropout_rate):
-    if resnet == "resnet18":
-        weights = torchvision.models.ResNet18_Weights.DEFAULT
-        resnet_model = torchvision.models.resnet18
-    elif resnet == "resnet34":
-        weights = torchvision.models.ResNet34_Weights.DEFAULT
-        resnet_model = torchvision.models.resnet34
-    elif resnet == "resnet50":
-        weights = torchvision.models.ResNet50_Weights.DEFAULT
-        resnet_model = torchvision.models.resnet50
-    elif resnet == "resnet101":
-        weights = torchvision.models.ResNet101_Weights.DEFAULT
-        resnet_model = torchvision.models.resnet101
-    elif resnet == "resnet152":
-        weights = torchvision.models.ResNet152_Weights.DEFAULT
-        resnet_model = torchvision.models.resnet152
-    else:
-        print(f"{resnet} not supported")
-        exit(0)
-
-    net = resnet_model(weights=weights)
-
-    net.fc = torch.nn.Sequential(
-        torch.nn.Dropout(dropout_rate),
-        torch.nn.Linear(net.fc.in_features, NUM_CLASSES),
-    )
-    torch.nn.init.kaiming_uniform_(net.fc[1].weight)
-
-    return net
-
-
-def get_vit(net_name, dropout_rate):
-    if net_name == "vit_b_16":
-        weights = torchvision.models.vision_transformer.ViT_B_16_Weights.DEFAULT
-        vit_model = torchvision.models.vision_transformer.vit_b_16
-    elif net_name == "vit_b_32":
-        weights = torchvision.models.vision_transformer.ViT_B_32_Weights.DEFAULT
-        vit_model = torchvision.models.vision_transformer.vit_b_32
-    elif net_name == "vit_l_16":
-        weights = torchvision.models.vision_transformer.ViT_L_16_Weights.DEFAULT
-        vit_model = torchvision.models.vision_transformer.vit_l_16
-    else:
-        print(f"{net_name} not supported")
-        exit(0)
-
-    net = vit_model(weights=weights)
-
-    net.heads.head = torch.nn.Sequential(
-        torch.nn.Dropout(dropout_rate),
-        torch.nn.Linear(net.heads.head.in_features, NUM_CLASSES),
-    )
-    torch.nn.init.kaiming_uniform_(net.heads.head[1].weight)
-
-    return net
-
-
-def get_efficientnet(net_name, dropout_rate):
-    if net_name == "efficientnet_b0":
-        weights = torchvision.models.efficientnet.EfficientNet_B0_Weights.DEFAULT
-        efficientnet_model = torchvision.models.efficientnet_b0
-    elif net_name == "efficientnet_b1":
-        weights = torchvision.models.efficientnet.EfficientNet_B1_Weights.DEFAULT
-        efficientnet_model = torchvision.models.efficientnet_b1
-    elif net_name == "efficientnet_b2":
-        weights = torchvision.models.efficientnet.EfficientNet_B2_Weights.DEFAULT
-        efficientnet_model = torchvision.models.efficientnet_b2
-    else:
-        print(f"{net_name} not supported")
-        exit(0)
-
-    net = efficientnet_model(weights=weights)
-
-    net.classifier[1] = torch.nn.Linear(net.classifier[1].in_features, NUM_CLASSES)
-    net.classifier.add_module("dropout", torch.nn.Dropout(dropout_rate))
-    torch.nn.init.kaiming_uniform_(net.classifier[1].weight)
-
-    return net
-
-
-def get_net(net_name="resnet50", dropout_rate=0.5):
-    if "resnet" in net_name:
-        return get_resnet(net_name, dropout_rate).to(device)
-    elif "vit" in net_name:
-        return get_vit(net_name, dropout_rate).to(device)
-    elif "efficientnet" in net_name:
-        return get_efficientnet(net_name, dropout_rate).to(device)
-    else:
-        print(f"{net_name} not supported")
-        exit(0)
-
-
-def get_loaders(batch_size, model_name, directory="createDataset/dataset/"):
-    transform = transforms.Compose(
-        [
-            transforms.Resize((240, 240))
-            if "efficientnet" in model_name
-            else transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            transforms.RandomHorizontalFlip(),
-        ]
-    )
-
-    datasets = {
-        "train": GeoGuessrDataset(
-            os.path.join(directory, "train.csv"), directory, transform
-        ),
-        "val": GeoGuessrDataset(
-            os.path.join(directory, "val.csv"), directory, transform
-        ),
-        "test": GeoGuessrDataset(
-            os.path.join(directory, "test.csv"), directory, transform
-        ),
-    }
-
-    loaders = {
-        split: DataLoader(
-            datasets[split],
-            batch_size=batch_size,
-            shuffle=(split == "train"),
-            num_workers=4,
-        )
-        for split in ["train", "val", "test"]
-    }
-
-    return loaders["train"], loaders["val"], loaders["test"]
-
-
-def get_logging_dir(directory="runs/"):
-    os.makedirs(directory, exist_ok=True)
-    existing_runs = [int(d) for d in os.listdir(directory) if d.isdigit()]
-    next_run = max(existing_runs, default=-1) + 1
-    run_dir = os.path.join(directory, str(next_run))
-
-    return run_dir
 
 
 def geoguessr_loss(pred, truth):
@@ -241,6 +104,7 @@ def train(net, optimizer, epochs, train_loader, eval_loader, test_loader, loss_f
 
 
 def wandb_train():
+    args = get_args()
     wandb.init()
     config = wandb.config
 
@@ -254,7 +118,7 @@ def wandb_train():
 
     print(f"Training {net_name} on {device}, optimizer={optim}, lr={lr}, weight_decay={wd}, bs={bs}, dropout={dropout}")
 
-    net = get_net(net_name, dropout)
+    net = get_net(net_name, dropout, device)
 
     if optim == "adam":
         optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=wd)
@@ -265,14 +129,29 @@ def wandb_train():
     else:
         raise Exception("Invalid optimizer")
 
-    train_loader, eval_loader, test_loader = get_loaders(
-        bs, net_name, directory="createDataset/dataset/"
-    )
+    if args.mode == "geoGuessr":
+        train_loader, eval_loader, test_loader = get_loaders_geoGuessr(
+            bs, net_name, directory="createDataset/geoGuessrDataset/"
+        )
+    elif args.mode == "googleMaps":
+        train_loader, eval_loader, test_loader = get_loaders_googleMaps(
+            bs, net_name, directory="createDataset/mapsDataset/"
+        )
 
     test_loss = train(
         net, optimizer, epochs, train_loader, eval_loader, test_loader, geoguessr_loss
     )
     wandb.log({"test_loss": test_loss})
+
+
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "mode",
+        choices=["geoGuessr", "googleMaps"],
+        help="Select either geoguessr or googleMaps",
+    )
+    return parser.parse_args()
 
 
 if __name__ == "__main__":
