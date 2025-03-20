@@ -1,6 +1,7 @@
 import os
 import re
 import folium
+import argparse
 import pandas as pd
 import matplotlib.pyplot as plt
 from folium.plugins import HeatMap
@@ -36,6 +37,7 @@ def get_all_coords(dataset_dir):
 
 def get_all_coords_geoguessrdataset(dataset_dir):
     coords = []
+    location_dict = {}
     for file in os.listdir(dataset_dir):
         if not file.endswith(".csv"):
             continue
@@ -45,10 +47,11 @@ def get_all_coords_geoguessrdataset(dataset_dir):
             header=None,
             names=["panoidID", "lat", "lng"],
         ).drop_duplicates(subset="panoidID", keep="first")
-        location_dict = location_data.set_index("panoidID")[["lat", "lng"]].to_dict(
+        tmp_location_dict = location_data.set_index("panoidID")[["lat", "lng"]].to_dict(
             orient="index"
         )
-        location_dict = {k: (v["lat"], v["lng"]) for k, v in location_dict.items()}
+        tmp_location_dict = {k: (v["lat"], v["lng"]) for k, v in tmp_location_dict.items()}
+        location_dict.update(tmp_location_dict)
 
     for img_path in os.listdir(dataset_dir):
         match = re.match(r"^(.*?)\.png$", img_path)
@@ -80,10 +83,10 @@ def get_country_data(dataset_dir):
     return country_data
 
 
-def plot_heatmap(coordinates):
+def plot_heatmap(coordinates, dataset_dir):
     m = folium.Map(location=[20, 0], zoom_start=2)
     HeatMap(coordinates, radius=15).add_to(m)
-    m.save("heatmap.html")
+    m.save(f"{dataset_dir}_heatmap.html")
 
 
 def plot_country_distribution(country_data):
@@ -100,9 +103,21 @@ def plot_country_distribution(country_data):
     plt.show()
 
 
-if __name__ == "__main__":
-    coords = get_all_coords_geoguessrdataset("geoGuessrDataset")
-    plot_heatmap(coords)
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("option", choices=["heatmap", "countryData"])
+    parser.add_argument("dataset_dir", type=str)
+    return parser.parse_args()
 
-    # country_data = get_country_data("dataset/")
-    # plot_country_distribution(country_data)
+
+if __name__ == "__main__":
+    args = get_args()
+
+    if args.option == "heatmap":
+        coords = get_all_coords_geoguessrdataset(args.dataset_dir)
+        if len(coords) == 0:
+            coords = get_all_coords(args.dataset_dir)
+        plot_heatmap(coords, args.dataset_dir)
+    elif args.option == "countryData":
+        country_data = get_country_data(args.dataset_dir)
+        plot_country_distribution(country_data)
