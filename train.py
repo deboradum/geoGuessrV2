@@ -40,6 +40,7 @@ def get_distance(pred, truth):
     )  # B, 1
     c = 2 * torch.atan2(torch.sqrt(a), torch.sqrt(1 - a))  # B, 1
     distance = EARTH_RADIUS * c  # B, 1
+    distance /= 1000  # Distance in m > km
 
     return distance.mean()
 
