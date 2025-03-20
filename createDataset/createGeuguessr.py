@@ -27,7 +27,7 @@ known_coords = {}
 
 MAP_X, MAP_Y = 1779, -183
 GUESS_X, GUESS_Y = 1789, -40
-CENTER_X, CENTER_Y = 801, -634
+CENTER_X, CENTER_Y = 811, -628
 
 
 def load_cookies(browser, cookie_file, url):
@@ -164,7 +164,7 @@ def next_round(counter):
 
 
 if __name__ == "__main__":
-    num_images = 10000
+    num_images = 15000
     geo_guessr_url = "https://www.geoguessr.com/"
     dataset_dir = "geoGuessrDataset/"
 
@@ -184,7 +184,7 @@ if __name__ == "__main__":
 
             num_existing_screens, screenshot_path = take_screenshot(dataset_dir, panoidID)
 
-            with open(f"{dataset_dir}/anUrbanWorld.csv", "a+") as f:
+            with open(f"{dataset_dir}/anOfficialWorld.csv", "a+") as f:
                 f.write(f"{panoidID},{lat},{lon}\n")
 
             next_round(counter)
