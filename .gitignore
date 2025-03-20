@@ -3,10 +3,16 @@ chromedriver
 .DS_Store
 locations.csv
 cookies.txt
+heatmap.html
 
 *.jpg
 *.png
 *.pth
+*.csv
 
 __pycache__
 wandb*
+
+!train.csv
+!test.csv
+!val.csv
