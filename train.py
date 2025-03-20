@@ -9,10 +9,8 @@ from tqdm import tqdm
 from models import get_net
 from dataset import get_loaders_googleMaps, get_loaders_geoGuessr
 
-
 EARTH_RADIUS = 6371000
 MAX_DISTANCE = 20000000.0
-
 
 device = torch.device(
     "mps"
@@ -22,46 +20,55 @@ device = torch.device(
     else "cpu"
 )
 
-
-def geoguessr_loss(pred, truth):
-    # Calculate distance
-    #phi_pred = torch.deg2rad(pred[:, 0])  # B, 1
-    #phi_truth = torch.deg2rad(truth[:, 0])  # B, 1
-    #delta_phi = torch.deg2rad(truth[:, 0] - pred[:, 0])  # B, 1
-    #delta_lambda = torch.deg2rad(truth[:, 1] - pred[:, 1])  # B, 1
-    #a = (
-    #    torch.sin(delta_phi / 2.0) ** 2
-    #    + torch.cos(phi_pred)
-    #    * torch.cos(phi_truth)
-    #    * torch.sin(delta_lambda / 2.0) ** 2
-    #)  # B, 1
-    #c = 2 * torch.atan2(torch.sqrt(a), torch.sqrt(1 - a))  # B, 1
-    #distance = EARTH_RADIUS * c  # B, 1
-
-    # Loss v1
-    # Calculate GeoGuessr score
-    #scaling_factor = 2000000
-    #score = 5000 * torch.exp(-distance / scaling_factor)
-    #loss = torch.mean(-torch.log(score + 1e-9))
-
-    # Loss v2
-    #loss = distance.mean()
-
-    # Loss v3
-    #log_distance = torch.log1p(distance)
-    #max_log_distance = torch.log1p(torch.tensor(MAX_DISTANCE, device=device))
-    #log_distance_normalized = log_distance / max_log_distance
-    #loss = log_distance_normalized.mean()
-
-    # Loss V4
+def loss_fn(pred, truth):
     loss = F.mse_loss(pred, truth, reduction="none").mean(dim=1).mean()
 
     return loss
 
 
+# Gets average haversine distance
+def get_distance(pred, truth):
+    phi_pred = torch.deg2rad(pred[:, 0])  # B, 1
+    phi_truth = torch.deg2rad(truth[:, 0])  # B, 1
+    delta_phi = torch.deg2rad(truth[:, 0] - pred[:, 0])  # B, 1
+    delta_lambda = torch.deg2rad(truth[:, 1] - pred[:, 1])  # B, 1
+    a = (
+       torch.sin(delta_phi / 2.0) ** 2
+       + torch.cos(phi_pred)
+       * torch.cos(phi_truth)
+       * torch.sin(delta_lambda / 2.0) ** 2
+    )  # B, 1
+    c = 2 * torch.atan2(torch.sqrt(a), torch.sqrt(1 - a))  # B, 1
+    distance = EARTH_RADIUS * c  # B, 1
+
+    return distance.mean()
+
+
+# Gets average geoguessr score (100 meters = 4999 points)
+def get_geoguessr_score(pred, truth, scaling_factor=2):
+    phi_pred = torch.deg2rad(pred[:, 0])  # B, 1
+    phi_truth = torch.deg2rad(truth[:, 0])  # B, 1
+    delta_phi = torch.deg2rad(truth[:, 0] - pred[:, 0])  # B, 1
+    delta_lambda = torch.deg2rad(truth[:, 1] - pred[:, 1])  # B, 1
+    a = (
+        torch.sin(delta_phi / 2.0) ** 2
+        + torch.cos(phi_pred)
+        * torch.cos(phi_truth)
+        * torch.sin(delta_lambda / 2.0) ** 2
+    )  # B, 1
+    c = 2 * torch.atan2(torch.sqrt(a), torch.sqrt(1 - a))  # B, 1
+    distance = EARTH_RADIUS * c  # B, 1
+    scaling_factor = 5000000
+    score = 5000 * torch.exp(-distance / scaling_factor)
+
+    return torch.mean(score)
+
+
 def evaluate(net, loader, loss_fn):
     net.eval()
     val_loss = 0.0
+    val_distance = 0.0
+    val_score = 0.0
     with torch.no_grad():
         for X, y in loader:
             X, y = X.to(device), y.to(device)
@@ -69,11 +76,18 @@ def evaluate(net, loader, loss_fn):
             out_lat = out[:, 0] * 90  # Scale latitude to [-90, 90]
             out_lon = out[:, 1] * 180  # Scale longitude to [-180, 180]
             out_scaled = torch.stack([out_lat, out_lon], dim=1)
-            loss = loss_fn(out_scaled, y)
-            val_loss += loss.item()
-    val_loss /= len(loader)
 
-    return val_loss
+            loss = loss_fn(out_scaled, y)
+            distance = get_distance(out_scaled, y)
+            score = get_geoguessr_score(out_scaled, y)
+            val_loss += loss.item()
+            val_distance += distance.item()
+            val_score += score.item()
+    val_loss /= len(loader)
+    val_distance /= len(loader)
+    val_score /= len(loader)
+
+    return val_loss, val_distance, val_score
 
 
 def train(net, optimizer, epochs, train_loader, eval_loader, test_loader, loss_fn):
@@ -94,11 +108,31 @@ def train(net, optimizer, epochs, train_loader, eval_loader, test_loader, loss_f
             loss.backward()
             optimizer.step()
             global_step += X.size(0)
-            wandb.log({"train_loss": loss.item(), "step": global_step})
-        val_loss = evaluate(net, eval_loader, loss_fn)
+
+            distance = get_distance(out_scaled, y)
+            score = get_geoguessr_score(out_scaled, y)
+
+            wandb.log(
+                {
+                    "train_loss": loss.item(),
+                    "train_distance": distance.item(),
+                    "train_score": score.item(),
+                    "step": global_step,
+                }
+            )
+        val_loss, val_distance, val_score = evaluate(net, eval_loader, loss_fn)
         took = round(time.time() - s, 3)
-        print(f"Epoch {e} finished, val loss: {round(val_loss, 4)}, took {took}s")
-        wandb.log({"eval_loss": val_loss, "epoch": e})
+        print(
+            f"Epoch {e} finished, val loss: {val_loss:.3f}, val distance: {val_distance:.3f}, val score: {val_score:.3f} took {took:.3f}s"
+        )
+        wandb.log(
+            {
+                "eval_loss": val_loss,
+                "eval_distance": val_distance,
+                "eval_score": val_score,
+                "epoch": e,
+            }
+        )
 
     return evaluate(net, test_loader, loss_fn)
 
@@ -138,10 +172,16 @@ def wandb_train():
             bs, net_name, directory="createDataset/mapsDataset/"
         )
 
-    test_loss = train(
-        net, optimizer, epochs, train_loader, eval_loader, test_loader, geoguessr_loss
+    test_loss, test_distance, test_score = train(
+        net, optimizer, epochs, train_loader, eval_loader, test_loader, loss_fn
     )
-    wandb.log({"test_loss": test_loss})
+    wandb.log(
+        {
+            "test_loss": test_loss,
+            "test_distance": test_distance,
+            "test_score": test_score,
+        }
+    )
 
 
 def get_args():
