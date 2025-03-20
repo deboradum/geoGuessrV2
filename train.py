@@ -252,7 +252,7 @@ def wandb_train():
     epochs = config.epochs
     optim = config.optimizer
 
-    print(f"Training {net_name} on {device}, lr={lr}, weight_decay={wd}, bs={bs}, dropout={dropout}")
+    print(f"Training {net_name} on {device}, optimizer={optim}, lr={lr}, weight_decay={wd}, bs={bs}, dropout={dropout}")
 
     net = get_net(net_name, dropout)
 
@@ -260,6 +260,8 @@ def wandb_train():
         optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=wd)
     elif optim == "adamW":
         optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=wd)
+    elif optim == "sgd":
+        optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=wd)
     else:
         raise Exception("Invalid optimizer")
 
@@ -297,6 +299,7 @@ if __name__ == "__main__":
                 "values": [
                     "adam",
                     "adamW",
+                    "sgd",
                 ]
             },
             "dropout": {"values": [0.3, 0.4, 0.5, 0.6]},
