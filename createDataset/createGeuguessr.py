@@ -1,15 +1,11 @@
 import json
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.action_chains import ActionChains
-from selenium.webdriver.support import expected_conditions as EC
 import pyautogui
 import requests
-import traceback
 import os
 import time
-from PIL import ImageGrab, Image
+from PIL import ImageGrab
 from dotenv import load_dotenv
 from urllib.parse import urlparse, parse_qs
 
@@ -164,7 +160,7 @@ def next_round(counter):
 
 
 if __name__ == "__main__":
-    num_images = 15000
+    num_images = 55000
     geo_guessr_url = "https://www.geoguessr.com/"
     dataset_dir = "geoGuessrDataset/"
 

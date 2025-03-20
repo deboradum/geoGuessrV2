@@ -249,7 +249,7 @@ if __name__ == "__main__":
 
     try:
         for country, directory in todo:
-            directory = f"dataset/{directory}"
+            directory = f"mapsDataset/{directory}"
             os.makedirs(directory, exist_ok=True)
             try:
                 do_country(directory, country, 150)
