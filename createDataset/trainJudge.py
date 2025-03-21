@@ -1,9 +1,9 @@
 import time
 import torch
+import argparse
 import torchvision
 from torchvision import transforms, datasets
 from torch.utils.data import DataLoader
-import torchvision.utils as vutils
 
 from PIL import ImageFile
 
@@ -19,7 +19,7 @@ device = torch.device(
 
 
 def is_valid(path):
-    return path.endswith(".jpg")
+    return path.endswith(".jpg") or path.endswith(".png")
 
 
 def get_dataloaders(root_dir="dataset/", batch_size=16):
@@ -174,9 +174,11 @@ def train(
 
     torch.save(net.state_dict(), filepath)
 
-    best_model = torch.load(
-        filepath, map_location=torch.device("mps"), weights_only=True
+    net.load_state_dict(
+        torch.load(filepath, map_location=torch.device("mps"))
     )
+    net.eval()
+    best_model = net
     best_model.eval()
     test_loss = 0.0
     test_acc_top1 = 0.0
@@ -196,11 +198,30 @@ def train(
     return min_test_loss
 
 
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "mode",
+        choices=["geoGuessr", "googleMaps"],
+        help="Select either geoguessr or googleMaps",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
     net = get_net().to(device)
-    train_loader, test_loader, num_classes = get_dataloaders(
-        root_dir="acceptDeclineDataset/", batch_size=64
-    )
+    args = get_args()
+    if args.mode == "googleMaps":
+        train_loader, test_loader, num_classes = get_dataloaders(
+            root_dir="acceptDeclineDatasetGoogleMaps/", batch_size=64
+        )
+        save_path = "mapsJudge.pth"
+    elif args.mode == "geoGuessr":
+        train_loader, test_loader, num_classes = get_dataloaders(
+            root_dir="acceptDeclineDatasetGeoGuessr/", batch_size=64
+        )
+        save_path = "geoGuessrJudge.pth"
+
     criterion = torch.nn.BCEWithLogitsLoss()
     params_1x = [
         param for name, param in net.named_parameters() if "fc" not in str(name)
@@ -219,8 +240,8 @@ if __name__ == "__main__":
         test_loader,
         criterion,
         optimizer,
-        10,
+        5,
         device,
-        "judge.pth",
+        save_path,
         3,
     )
