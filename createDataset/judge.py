@@ -1,9 +1,9 @@
 import os
 import torch
-from torchvision import transforms
+import argparse
+
 from PIL import Image
-from torch.utils.data import DataLoader
-from torchvision import datasets
+from torchvision import transforms
 
 from trainJudge import get_net
 
@@ -47,18 +47,56 @@ def predict_batch(net, image_paths, device, batch_size=16):
     return predictions
 
 
-def delete_decline_images(image_paths, net, device, batch_size=16):
+def delete_decline_images(image_paths, net, device, batch_size=16, dry_run=True):
     for i in range(0, len(image_paths), batch_size):
         batch_paths = image_paths[i : i + batch_size]
         predictions = predict_batch(net, batch_paths, device, batch_size)
 
         # Delete the images predicted as decline (prediction < 0.5)
         for idx, image_path in enumerate(batch_paths):
-            if predictions[idx] < 0.5:  # Decline predicted
-                print(f"Deleting {image_path} (Predicted: decline)")
-                os.remove(image_path)
-            else:
-                print(f"Keeping {image_path} (Predicted: accept)")
+            if predictions[idx] < 0.25:  # Decline predicted
+                print(f"Deleting {image_path} (Predicted: decline - {predictions[idx]})")
+                if not dry_run:
+                    os.remove(image_path)
+
+
+def judge_maps(dataset_dir, dry_run=True):
+    image_paths = []
+    for country in os.listdir(dataset_dir):
+        if not os.path.isdir(f"{dataset_dir}/{country}"):
+            continue
+        for img_path in os.listdir(f"{dataset_dir}/{country}/"):
+            if not img_path.endswith(".jpg"):
+                continue
+
+            full_img_path = f"{dataset_dir}/{country}/{img_path}"
+            image_paths.append(full_img_path)
+    delete_decline_images(image_paths, net, device, batch_size=64, dry_run=dry_run)
+
+
+def judge_geoguessr(dataset_dir, dry_run=True):
+    image_paths = []
+    for img_path in os.listdir(dataset_dir):
+        if not img_path.endswith(".png"):
+            continue
+
+        full_img_path = f"{dataset_dir}/{img_path}"
+        image_paths.append(full_img_path)
+    delete_decline_images(image_paths, net, device, batch_size=64, dry_run=dry_run)
+
+
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "mode",
+        choices=["geoGuessr", "googleMaps"],
+        help="Select either geoguessr or googleMaps",
+    )
+    parser.add_argument(
+        "--dry",
+        action="store_true",
+    )
+    return parser.parse_args()
 
 
 if __name__ == "__main__":
@@ -70,19 +108,15 @@ if __name__ == "__main__":
         else "cpu"
     )
 
-    model_filepath = "judge.pth"
-    net = load_model(model_filepath, device)
+    args = get_args()
+    if args.dry:
+        print("DRY RUN")
 
-    dataset_dir = "dataset"
-    image_paths = []
-    for country in os.listdir(dataset_dir):
-        if not os.path.isdir(f"{dataset_dir}/{country}"):
-            continue
-        for img_path in os.listdir(f"{dataset_dir}/{country}/"):
-            if not img_path.endswith(".jpg"):
-                continue
-
-            full_img_path = f"{dataset_dir}/{country}/{img_path}"
-            image_paths.append(full_img_path)
-
-    delete_decline_images(image_paths, net, device, batch_size=64)
+    if args.mode == "googleMaps":
+        model_filepath = "mapsJudge.pth"
+        net = load_model(model_filepath, device)
+        judge_maps("mapsDataset", args.dry)
+    elif args.mode == "geoGuessr":
+        model_filepath = "geoGuessrJudge.pth"
+        net = load_model(model_filepath, device)
+        judge_geoguessr("geoGuessrDataset", args.dry)
