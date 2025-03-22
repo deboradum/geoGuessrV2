@@ -92,8 +92,10 @@ def evaluate(net, loader, loss_fn):
 
 
 def train(net, optimizer, epochs, train_loader, eval_loader, test_loader, loss_fn):
-    val_loss = evaluate(net, eval_loader, loss_fn)
-    wandb.log({"eval_loss": val_loss})
+    val_loss, val_distance, val_score = evaluate(net, eval_loader, loss_fn)
+    wandb.log(
+        {"eval_loss": val_loss, "eval_distance": val_distance, "eval_score": val_score}
+    )
     for e in range(epochs):
         s = time.time()
         global_step = e * len(train_loader.dataset)  # Num training examples
