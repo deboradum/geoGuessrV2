@@ -59,7 +59,7 @@ def get_geoguessr_score(pred, truth, scaling_factor=2):
     )  # B, 1
     c = 2 * torch.atan2(torch.sqrt(a), torch.sqrt(1 - a))  # B, 1
     distance = EARTH_RADIUS * c  # B, 1
-    scaling_factor = 5000000
+    scaling_factor = 2000000
     score = 5000 * torch.exp(-distance / scaling_factor)
 
     return torch.mean(score)
