@@ -204,32 +204,32 @@ if __name__ == "__main__":
         "parameters": {
             "net_name": {
                 "values": [
-                    "resnet18",
-                    "resnet34",
-                    "resnet50",
+                    # "resnet18",
+                    # "resnet34",
+                    # "resnet50",
                     "resnet101",
                     #"resnet152",
-                    "vit_b_16",
-                    "vit_b_32",
+                    # "vit_b_16",
+                    # "vit_b_32",
                     #"vit_l_16",
-                    "efficientnet_b0",
+                    # "efficientnet_b0",
                     "efficientnet_b1",
-                    #"efficientnet_b2",
+                    # "efficientnet_b2",
                 ]
             },
             "optimizer": {
                 "values": [
                     "adam",
                     "adamW",
-                    "sgd",
+                    # "sgd",
                 ]
             },
-            "dropout": {"values": [0.3, 0.4, 0.5, 0.6]},
-            "epochs": {"value": 4},
+            "dropout": {"values": [0.3, 0.4, 0.5]},
+            "epochs": {"value": 5},
             "learning_rate": {
                 "distribution": "log_uniform_values",
                 "min": 1e-4,
-                "max": 5e-2,
+                "max": 5e-4,
             },
             "weight_decay": {
                 "distribution": "log_uniform_values",
