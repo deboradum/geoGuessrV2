@@ -16,3 +16,7 @@ wandb*
 !train.csv
 !test.csv
 !val.csv
+
+!anUrbanWorld.csv
+!anOfficialWorld.csv
+!aCommunityWorld.csv
