@@ -4,7 +4,7 @@ import torchvision
 NUM_CLASSES = 2
 
 
-def get_resnet(resnet, dropout_rate):
+def get_resnet(resnet, dropout_rate, widening_factor):
     if resnet == "resnet18":
         weights = torchvision.models.ResNet18_Weights.DEFAULT
         resnet_model = torchvision.models.resnet18
@@ -25,12 +25,16 @@ def get_resnet(resnet, dropout_rate):
         exit(0)
 
     net = resnet_model(weights=weights)
+    hidden = net.fc.in_features * widening_factor
 
     net.fc = torch.nn.Sequential(
         torch.nn.Dropout(dropout_rate),
-        torch.nn.Linear(net.fc.in_features, NUM_CLASSES),
+        torch.nn.Linear(net.fc.in_features, hidden),
+        torch.nn.ReLU(),
+        torch.nn.Linear(hidden, NUM_CLASSES),
     )
     torch.nn.init.kaiming_uniform_(net.fc[1].weight)
+    torch.nn.init.kaiming_uniform_(net.fc[3].weight)
 
     return net
 
@@ -83,9 +87,9 @@ def get_efficientnet(net_name, dropout_rate):
     return net
 
 
-def get_net(net_name="resnet50", dropout_rate=0.5, device="cpu"):
+def get_net(net_name="resnet50", dropout_rate=0.5, widening_factor=1, device="cpu"):
     if "resnet" in net_name:
-        return get_resnet(net_name, dropout_rate).to(device)
+        return get_resnet(net_name, dropout_rate, widening_factor).to(device)
     elif "vit" in net_name:
         return get_vit(net_name, dropout_rate).to(device)
     elif "efficientnet" in net_name:

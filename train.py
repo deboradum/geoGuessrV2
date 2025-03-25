@@ -152,10 +152,13 @@ def wandb_train():
     dropout = config.dropout
     epochs = config.epochs
     optim = config.optimizer
+    widening_factor = config.widening_factor
 
-    print(f"Training {net_name} on {device}, optimizer={optim}, lr={lr}, weight_decay={wd}, bs={bs}, dropout={dropout}")
+    print(
+        f"Training {net_name} on {device}, widening_factor={widening_factor}, optimizer={optim}, lr={lr}, weight_decay={wd}, bs={bs}, dropout={dropout}"
+    )
 
-    net = get_net(net_name, dropout, device)
+    net = get_net(net_name, dropout, widening_factor, device)
 
     if optim == "adam":
         optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=wd)
@@ -208,10 +211,10 @@ if __name__ == "__main__":
                     # "resnet34",
                     # "resnet50",
                     "resnet101",
-                    #"resnet152",
+                    # "resnet152",
                     # "vit_b_16",
                     # "vit_b_32",
-                    #"vit_l_16",
+                    # "vit_l_16",
                     # "efficientnet_b0",
                     # "efficientnet_b1",
                     # "efficientnet_b2",
@@ -225,6 +228,7 @@ if __name__ == "__main__":
                 ]
             },
             "dropout": {"values": [0.3, 0.4, 0.5]},
+            "widening_factor": {"values": [1, 2, 4]},
             "epochs": {"value": 5},
             "learning_rate": {
                 "distribution": "log_uniform_values",
