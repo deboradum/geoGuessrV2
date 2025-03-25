@@ -213,7 +213,7 @@ if __name__ == "__main__":
                     # "vit_b_32",
                     #"vit_l_16",
                     # "efficientnet_b0",
-                    "efficientnet_b1",
+                    # "efficientnet_b1",
                     # "efficientnet_b2",
                 ]
             },
