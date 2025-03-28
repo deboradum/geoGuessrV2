@@ -74,7 +74,7 @@ def create_splits_geoGuessr(dataset_dir, split=(80, 10, 10)):
 
     # Gets all images and their labels
     for img_path in os.listdir(dataset_dir):
-        match = re.match(r"^(.*?)\.png$", img_path)
+        match = re.match(r"^(.*?)\.jpg$", img_path)
         if not match:
             print(img_path, "is no match")
             continue
