@@ -1,3 +1,4 @@
+import copy
 import time
 import torch
 import wandb
@@ -96,6 +97,11 @@ def train(net, optimizer, epochs, train_loader, eval_loader, test_loader, loss_f
     wandb.log(
         {"eval_loss": val_loss, "eval_distance": val_distance, "eval_score": val_score}
     )
+
+    best_loss = float('inf')
+    best_net = None
+    early_stop_counter = 0
+
     for e in range(epochs):
         s = time.time()
         global_step = e * len(train_loader.dataset)  # Num training examples
@@ -136,6 +142,15 @@ def train(net, optimizer, epochs, train_loader, eval_loader, test_loader, loss_f
                 "epoch": e,
             }
         )
+
+        if val_loss < best_loss:
+            best_loss = val_loss
+            best_net = copy.deepcopy(net)
+        else:
+            early_stop_counter += 1
+            if early_stop_counter > 3:
+                net = best_net
+                break
 
     return evaluate(net, test_loader, loss_fn)
 
