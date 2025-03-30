@@ -153,14 +153,14 @@ def next_round(counter):
     # prevent this
     if counter % 20 == 0:
         pyautogui.hotkey("command", "r")
-        time.sleep(6)
+        time.sleep(4)
         pyautogui.press("space")
     simulate_mouse_click(CENTER_X, CENTER_Y)
-    time.sleep(2)  # Wait for next round
+    time.sleep(1.3)  # Wait for next round
 
 
 if __name__ == "__main__":
-    num_images = 55000
+    num_images = 21000
     geo_guessr_url = "https://www.geoguessr.com/"
     dataset_dir = "geoGuessrDataset/"
 
@@ -178,9 +178,9 @@ if __name__ == "__main__":
                 next_round(counter)
                 continue
 
-            num_existing_screens, screenshot_path = take_screenshot(dataset_dir, panoidID)
+            take_screenshot(dataset_dir, panoidID)
 
-            with open(f"{dataset_dir}/anOfficialWorld.csv", "a+") as f:
+            with open(f"{dataset_dir}/world.csv", "a+") as f:
                 f.write(f"{panoidID},{lat},{lon}\n")
 
             next_round(counter)
