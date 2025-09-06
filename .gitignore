@@ -21,3 +21,5 @@ wandb*
 !anOfficialWorld.csv
 !aCommunityWorld.csv
 !world.csv
+
+.vscode

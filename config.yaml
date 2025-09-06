@@ -1,0 +1,13 @@
+net_name: "convnext-tiny"
+dataset_dir: "dataset/"
+log_interval: 10
+seed: 123
+epochs: 2
+optimizer: "adamW"
+learning_rate: 0.0001
+weight_decay: 0.05
+batch_size: 8
+gradient_clipping_norm: 1.0
+early_stop: 3
+num_classes: 1000
+run_name: "You forgot to change the run name"

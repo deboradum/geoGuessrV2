@@ -1,99 +1,63 @@
 import torch
 import torchvision
 
-NUM_CLASSES = 2
+import torch.nn as nn
+
+from typing import Any
+
+class GeoGuessrModel(nn.Module):
+    def __init__(self, backbone: nn.Module, num_features: int, num_classes: int):
+        super().__init__()
+        self.backbone = backbone
+        self.flatten = nn.Flatten()
+        self.lon_head = nn.Sequential(
+            nn.Linear(num_features, 512),
+            nn.ReLU(),
+            nn.Linear(512, num_classes)
+        )
+        self.lat_head = nn.Sequential(
+            nn.Linear(num_features, 512),
+            nn.ReLU(),
+            nn.Linear(512, num_classes)
+        )
+
+    def forward(self, x):
+        x = self.backbone(x)
+        x = self.flatten(x)
+        lon = self.lon_head(x)
+        lat = self.lat_head(x)
+        out = torch.stack([lon, lat], dim=-1)  # BxCx2
+
+        return out
 
 
-def get_resnet(resnet, dropout_rate, widening_factor):
-    if resnet == "resnet18":
-        weights = torchvision.models.ResNet18_Weights.DEFAULT
-        resnet_model = torchvision.models.resnet18
-    elif resnet == "resnet34":
-        weights = torchvision.models.ResNet34_Weights.DEFAULT
-        resnet_model = torchvision.models.resnet34
-    elif resnet == "resnet50":
-        weights = torchvision.models.ResNet50_Weights.DEFAULT
-        resnet_model = torchvision.models.resnet50
-    elif resnet == "resnet101":
-        weights = torchvision.models.ResNet101_Weights.DEFAULT
-        resnet_model = torchvision.models.resnet101
-    elif resnet == "resnet152":
-        weights = torchvision.models.ResNet152_Weights.DEFAULT
-        resnet_model = torchvision.models.resnet152
+def get_convnext(size: str, num_classes: int) -> nn.Module:
+    if size == "tiny":  # 29M params
+        weights = torchvision.models.ConvNeXt_Tiny_Weights.DEFAULT
+        model = torchvision.models.convnext_tiny
+    elif size == "small":  # 50M parmas
+        weights = torchvision.models.ConvNeXt_Small_Weights.DEFAULT
+        model = torchvision.models.convnext_small
+    elif size == "base":  # 89M params
+        weights = torchvision.models.ConvNeXt_Base_Weights.DEFAULT
+        model = torchvision.models.convnext_base
+    elif size == "large":  # 198M params
+        weights = torchvision.models.ConvNeXt_Large_Weights.DEFAULT
+        model = torchvision.models.convnext_large
     else:
-        print(f"{resnet} not supported")
+        print(f"{size} not supported")
         exit(0)
 
-    net = resnet_model(weights=weights)
-    hidden = net.fc.in_features * widening_factor
+    backbone = model(weights=weights)
+    backbone_features = nn.Sequential(*list(backbone.children())[:-1])
+    num_features = backbone.classifier[2].in_features
 
-    net.fc = torch.nn.Sequential(
-        torch.nn.Dropout(dropout_rate),
-        torch.nn.Linear(net.fc.in_features, hidden),
-        torch.nn.ReLU(),
-        torch.nn.Linear(hidden, NUM_CLASSES),
-    )
-    torch.nn.init.kaiming_uniform_(net.fc[1].weight)
-    torch.nn.init.kaiming_uniform_(net.fc[3].weight)
-
-    return net
+    return GeoGuessrModel(backbone_features, num_features, num_classes)
 
 
-def get_vit(net_name, dropout_rate):
-    if net_name == "vit_b_16":
-        weights = torchvision.models.vision_transformer.ViT_B_16_Weights.DEFAULT
-        vit_model = torchvision.models.vision_transformer.vit_b_16
-    elif net_name == "vit_b_32":
-        weights = torchvision.models.vision_transformer.ViT_B_32_Weights.DEFAULT
-        vit_model = torchvision.models.vision_transformer.vit_b_32
-    elif net_name == "vit_l_16":
-        weights = torchvision.models.vision_transformer.ViT_L_16_Weights.DEFAULT
-        vit_model = torchvision.models.vision_transformer.vit_l_16
-    else:
-        print(f"{net_name} not supported")
-        exit(0)
-
-    net = vit_model(weights=weights)
-
-    net.heads.head = torch.nn.Sequential(
-        torch.nn.Dropout(dropout_rate),
-        torch.nn.Linear(net.heads.head.in_features, NUM_CLASSES),
-    )
-    torch.nn.init.kaiming_uniform_(net.heads.head[1].weight)
-
-    return net
-
-
-def get_efficientnet(net_name, dropout_rate):
-    if net_name == "efficientnet_b0":
-        weights = torchvision.models.efficientnet.EfficientNet_B0_Weights.DEFAULT
-        efficientnet_model = torchvision.models.efficientnet_b0
-    elif net_name == "efficientnet_b1":
-        weights = torchvision.models.efficientnet.EfficientNet_B1_Weights.DEFAULT
-        efficientnet_model = torchvision.models.efficientnet_b1
-    elif net_name == "efficientnet_b2":
-        weights = torchvision.models.efficientnet.EfficientNet_B2_Weights.DEFAULT
-        efficientnet_model = torchvision.models.efficientnet_b2
-    else:
-        print(f"{net_name} not supported")
-        exit(0)
-
-    net = efficientnet_model(weights=weights)
-
-    net.classifier[1] = torch.nn.Linear(net.classifier[1].in_features, NUM_CLASSES)
-    net.classifier.add_module("dropout", torch.nn.Dropout(dropout_rate))
-    torch.nn.init.kaiming_uniform_(net.classifier[1].weight)
-
-    return net
-
-
-def get_net(net_name="resnet50", dropout_rate=0.5, widening_factor=1, device="cpu"):
-    if "resnet" in net_name:
-        return get_resnet(net_name, dropout_rate, widening_factor).to(device)
-    elif "vit" in net_name:
-        return get_vit(net_name, dropout_rate).to(device)
-    elif "efficientnet" in net_name:
-        return get_efficientnet(net_name, dropout_rate).to(device)
+def get_net( num_classes: int, net_name:str="convnext-tiny", device="cpu") -> torch.nn.Module | Any:
+    if "convnext" in net_name:
+        return get_convnext(net_name.split("-")[-1], num_classes).to(device)
     else:
         print(f"{net_name} not supported")
         exit(0)
