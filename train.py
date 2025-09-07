@@ -156,8 +156,8 @@ def train(
         )
         print(
             f"[Eval] Epoch {e},",
-            f"Avg Loss: {val_loss:.4f}, Avg score: {val_score:.2f}, Avg distance: {val_distance:.2f}",
-            f"Avg lon acc: {val_lon_acc:.4f}, Avg lon top-3 acc: {val_lon_top3_acc:.2f}, Avg lat acc: {val_lat_acc:.2f} Avg lat top-3 acc: {val_lat_top3_acc:.2f},",
+            f"Avg Loss: {val_loss:.3f}, Avg score: {val_score:,.2f}, Avg distance: {val_distance:,.2f}",
+            f"Avg lon acc: {val_lon_acc:.2f}, Avg lon top-3 acc: {val_lon_top3_acc:.2f}, Avg lat acc: {val_lat_acc:.2f} Avg lat top-3 acc: {val_lat_top3_acc:.2f},",
             f"Time Taken: {taken:.2f}s",
         )
         start = time.perf_counter()
@@ -225,8 +225,8 @@ def train(
                 )
                 print(
                     f"Epoch {e}, step {i} (global step {global_step}),",
-                    f"Avg Loss: {avg_loss:.4f}, Avg score: {avg_score:.2f}, Avg distance: {avg_distance:.2f}",
-                    f"Avg lon acc: {avg_lon_acc:.4f}, Avg lon top-3 acc: {avg_lon_top3_acc:.2f}, Avg lat acc: {avg_lat_acc:.2f} Avg lat top-3 acc: {avg_lat_top3_acc:.2f},",
+                    f"Avg Loss: {avg_loss:.3f}, Avg score: {avg_score:,.2f}, Avg distance: {avg_distance:,.2f}",
+                    f"Avg lon acc: {avg_lon_acc:.2f}, Avg lon top-3 acc: {avg_lon_top3_acc:.2f}, Avg lat acc: {avg_lat_acc:.2f} Avg lat top-3 acc: {avg_lat_top3_acc:.2f},",
                     f"Time Taken: {taken:.2f}s, ({ips:.2f} i/s)",
                 )
 
