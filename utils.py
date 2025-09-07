@@ -12,6 +12,7 @@ class TrainConfig:
     seed: int = 123
     epochs: int = 2
     optimizer: str = "adamW"
+    beta_2: float = 0.95
     learning_rate: float = 0.0001
     weight_decay: float = 0.05
     batch_size: int = 64
@@ -30,7 +31,7 @@ def load_config(yaml_path: str) -> TrainConfig:
 def get_optimizer(config: TrainConfig, net: torch.nn.Module) -> torch.optim.Optimizer:
     optimizer : torch.optim.Optimizer
     if config.optimizer == "adam":
-        optimizer = torch.optim.Adam(net.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
+        optimizer = torch.optim.Adam(net.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay, betas=(0.9, config.beta_2))
     elif config.optimizer == "adamW":
         optimizer = torch.optim.AdamW(net.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     elif config.optimizer == "sgd":

@@ -7,7 +7,6 @@ import argparse
 import torch.nn as nn
 import torch.nn.functional as F
 
-from tqdm import tqdm
 from models import get_net
 from dataset import get_loaders_geoGuessr
 from utils import TrainConfig, load_config, get_optimizer
