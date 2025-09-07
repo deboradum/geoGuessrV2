@@ -86,7 +86,6 @@ def get_accs(pred_logits, targets):
 
 
 def evaluate(net, loader):
-    net.eval()
     val_loss = 0.0
     val_distance = 0.0
     val_score = 0.0
@@ -139,6 +138,7 @@ def train(
         start = time.perf_counter()
         net.eval()
         val_loss, val_distance, val_score, val_lon_acc, val_lat_acc, val_lon_top3_acc, val_lat_top3_acc = evaluate(net, eval_loader)
+        net.train()
         taken = time.perf_counter() - start
         wandb.log(
             {
@@ -248,6 +248,7 @@ def train(
                 net = best_net
                 break
 
+    net.eval()
     return evaluate(net, test_loader)
 
 
