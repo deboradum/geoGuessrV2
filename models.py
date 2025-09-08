@@ -6,9 +6,13 @@ import torch.nn as nn
 from typing import Any
 
 class GeoGuessrModel(nn.Module):
-    def __init__(self, backbone: nn.Module, num_features: int, num_classes: int):
+    def __init__(self, backbone: nn.Module, num_features: int, num_classes: int, freeze_weights: bool):
         super().__init__()
         self.backbone = backbone
+        if freeze_weights:
+            for param in self.backbone.parameters():
+                param.requires_grad = False
+
         self.flatten = nn.Flatten()
         self.lon_head = nn.Sequential(
             nn.Linear(num_features, 512),
@@ -31,7 +35,7 @@ class GeoGuessrModel(nn.Module):
         return out
 
 
-def get_convnext(size: str, num_classes: int) -> nn.Module:
+def get_convnext(size: str, num_classes: int, freeze_weights: bool) -> nn.Module:
     if size == "tiny":  # 29M params
         weights = torchvision.models.ConvNeXt_Tiny_Weights.DEFAULT
         model = torchvision.models.convnext_tiny
@@ -52,12 +56,12 @@ def get_convnext(size: str, num_classes: int) -> nn.Module:
     backbone_features = nn.Sequential(*list(backbone.children())[:-1])
     num_features = backbone.classifier[2].in_features
 
-    return GeoGuessrModel(backbone_features, num_features, num_classes)
+    return GeoGuessrModel(backbone_features, num_features, num_classes, freeze_weights)
 
 
-def get_net( num_classes: int, net_name:str="convnext-tiny", device="cpu") -> torch.nn.Module | Any:
+def get_net( num_classes: int, freeze_weights: bool, net_name:str="convnext-tiny", device="cpu") -> torch.nn.Module | Any:
     if "convnext" in net_name:
-        return get_convnext(net_name.split("-")[-1], num_classes).to(device)
+        return get_convnext(net_name.split("-")[-1], num_classes, freeze_weights).to(device)
     else:
         print(f"{net_name} not supported")
         exit(0)
