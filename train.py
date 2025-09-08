@@ -54,7 +54,7 @@ def get_distance_and_geoguessr_score(pred_logits, truth):
 
     a = torch.sin(delta_phi / 2) ** 2 + torch.cos(phi_pred) * torch.cos(phi_truth) * torch.sin(delta_lambda / 2) ** 2
     c = 2 * torch.atan2(torch.sqrt(a), torch.sqrt(1 - a))
-    distance = EARTH_RADIUS * c  # km
+    distance = EARTH_RADIUS * c / 1000 # km
 
     scaling_factor = 2000  # km
     score = 5000 * torch.exp(-distance / scaling_factor)
@@ -144,7 +144,8 @@ def train(
         wandb.log(
             {
                 "epoch": e,
-                "steps": global_step,
+                "batch": i,
+                "train_examples": global_step,
                 "eval_loss": val_loss,
                 "eval_distance": val_distance,
                 "eval_score": val_score,
@@ -221,6 +222,10 @@ def train(
                         "train_loss": avg_loss,
                         "train_score": avg_score,
                         "train_distance": avg_distance,
+                        "train_lon_acc": avg_lon_acc,
+                        "train_lat_acc": avg_lat_acc,
+                        "train_lon_top3_acc": avg_lon_top3_acc,
+                        "train_lat_top3_acc": avg_lat_top3_acc,
                     }
                 )
                 print(
