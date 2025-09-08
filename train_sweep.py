@@ -143,7 +143,6 @@ def train(
         wandb.log(
             {
                 "epoch": e,
-                "batch": i,
                 "train_examples": global_step,
                 "eval_loss": val_loss,
                 "eval_distance": val_distance,

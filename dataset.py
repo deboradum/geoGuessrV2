@@ -24,7 +24,8 @@ class GeoGuessrDataset(Dataset):
     def __getitem__(self, idx):
         row = self.data.iloc[idx]
         image_path = os.path.join(self.root_dir, row["path"])
-        image = Image.open(image_path).convert("RGB")
+        with Image.open(image_path) as image:
+            image = image.convert("RGB")
 
         if self.transform:
             image = self.transform(image)
