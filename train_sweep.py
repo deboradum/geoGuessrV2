@@ -301,7 +301,7 @@ if __name__ == "__main__":
         config_dict = {**vars(train_config)}
 
         print("Setting up model")
-        net = get_net(num_classes=train_config.num_classes, net_name=train_config.net_name, device=device)
+        net = get_net(num_classes=train_config.num_classes, freeze_weights=train_config.freeze_weights, net_name=train_config.net_name, device=device)
         optimizer = get_optimizer(train_config, net)
 
         if args.compile:

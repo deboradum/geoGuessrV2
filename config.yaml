@@ -1,4 +1,5 @@
 net_name: "convnext-tiny"
+freeze_weights: false
 dataset_dir: "dataset/"
 log_interval: 10
 seed: 123

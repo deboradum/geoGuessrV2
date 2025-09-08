@@ -7,6 +7,7 @@ from typing import Tuple
 @dataclass
 class TrainConfig:
     net_name: str = "convnext-tiny"
+    freeze_weights: bool = False
     dataset_dir: str = "dataset/"
     log_interval: int = 100
     seed: int = 123
