@@ -277,13 +277,13 @@ if __name__ == "__main__":
 
     sweep_config = {
         "method": "bayes",
-        "metric": {"name": "test_loss", "goal": "minimize"},
+        "metric": {"name": "test_distance", "goal": "minimize"},
         "parameters": {
             "optimizer": {"values": ["adam", "adamW", "sgd"]},
             "beta_2": {"values": [0.95, 0.97, 0.99, 0.999]},
-            "learning_rate": {"min": 1e-5, "max": 1e-3},
+            "learning_rate": {"min": 5e-4, "max": 1e-3},
             "weight_decay": {"values": [0.0, 0.01, 0.05]},
-            "num_classes": {"values": [100, 500, 1000]},
+            "num_classes": {"values": [100, 500]},
         },
     }
 

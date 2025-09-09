@@ -13,7 +13,8 @@ class GeoGuessrModel(nn.Module):
             for param in self.backbone.parameters():
                 param.requires_grad = False
 
-        self.flatten = nn.Flatten()
+        self.pool = nn.AdaptiveAvgPool2d(1)
+
         self.lon_head = nn.Sequential(
             nn.Linear(num_features, 512),
             nn.ReLU(),
@@ -27,7 +28,9 @@ class GeoGuessrModel(nn.Module):
 
     def forward(self, x):
         x = self.backbone(x)
-        x = self.flatten(x)
+        x = self.pool(x)  # (B, C, 1, 1)
+        x = torch.flatten(x, 1)
+
         lon = self.lon_head(x)
         lat = self.lat_head(x)
         out = torch.stack([lon, lat], dim=-1)  # BxCx2
@@ -53,10 +56,9 @@ def get_convnext(size: str, num_classes: int, freeze_weights: bool) -> nn.Module
         exit(0)
 
     backbone = model(weights=weights)
-    backbone_features = nn.Sequential(*list(backbone.children())[:-1])
     num_features = backbone.classifier[2].in_features
 
-    return GeoGuessrModel(backbone_features, num_features, num_classes, freeze_weights)
+    return GeoGuessrModel(backbone.features, num_features, num_classes, freeze_weights)
 
 
 def get_net( num_classes: int, freeze_weights: bool, net_name:str="convnext-tiny", device="cpu") -> torch.nn.Module | Any:
