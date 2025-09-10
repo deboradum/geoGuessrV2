@@ -28,9 +28,10 @@ if __name__ == "__main__":
         "method": "bayes",
         "metric": {"name": "test_distance", "goal": "minimize"},
         "parameters": {
-            "optimizer": {"values": ["adam", "adamW", "sgd"]},
+            # "optimizer": {"values": ["adam", "adamW", "sgd"]},
+            "optimizer": {"values": ["adamW"]},
             "beta_2": {"values": [0.95, 0.97, 0.99, 0.999]},
-            "learning_rate": {"min": 8e-5, "max": 5e-4},
+            "learning_rate": {"min": 5e-5, "max": 5e-4},
             "weight_decay": {"values": [0.0, 0.01, 0.05]},
         },
     }
@@ -65,7 +66,7 @@ if __name__ == "__main__":
         )
 
         print("Training on device:", device)
-        test_distance, test_score = train(
+        test_loss, test_distance, test_score = train(
             config=train_config,
             net=net,
             optimizer=optimizer,
@@ -75,6 +76,7 @@ if __name__ == "__main__":
         )
         wandb.log(
             {
+                "test_loss": test_loss,
                 "test_distance": test_distance,
                 "test_score": test_score,
             }

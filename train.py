@@ -36,16 +36,17 @@ def loss_fn(pred, target):
 
     a = torch.sin(delta_phi / 2) ** 2 + torch.cos(pred_lat) * torch.cos(true_lat) * torch.sin(delta_lambda / 2) ** 2
     c = 2 * torch.atan2(torch.sqrt(a), torch.sqrt(1 - a))
-    distance = EARTH_RADIUS * c / 1000
 
     with torch.no_grad():
+        distance = EARTH_RADIUS * c / 1000  # km
         scaling_factor = 2000  # km
         score = 5000 * torch.exp(-distance / scaling_factor)
 
-    return distance.mean(), score.mean()
+    return c.mean(), distance.mean(), score.mean()
 
 
 def evaluate(net, loader):
+    val_loss = 0.0
     val_distance = 0.0
     val_score = 0.0
     total_samples = 0
@@ -53,16 +54,18 @@ def evaluate(net, loader):
         for X, y in loader:
             X, y = X.to(device), y.to(device)
             out = net(X)  # BxCx2
-            distance, score = loss_fn(out, y)
+            loss, distance, score = loss_fn(out, y)
             bs = X.size(0)
 
+            val_loss += loss.item() * bs
             val_distance += distance.item() * bs
             val_score += score.item() * bs
             total_samples += bs
+    val_loss /= total_samples
     val_distance /= total_samples
     val_score /= total_samples
 
-    return val_distance, val_score
+    return val_loss, val_distance, val_score
 
 
 def train(
@@ -81,25 +84,27 @@ def train(
     # Evaluate
     start = time.perf_counter()
     net.eval()
-    val_distance, val_score = evaluate(net, eval_loader)
+    val_loss, val_distance, val_score = evaluate(net, eval_loader)
     net.train()
     taken = time.perf_counter() - start
     wandb.log(
         {
             "epoch": 0,
             "train_examples": global_step,
+            "eval_loss": val_loss,
             "eval_distance": val_distance,
             "eval_score": val_score,
         }
     )
     print(
         f"[Eval] Epoch 0,",
-        f"Avg score: {val_score:,.2f}, Avg distance: {val_distance:,.2f}",
+        f"Avg loss: {val_loss:.2f}, Avg score: {val_score:,.2f}, Avg distance: {val_distance:,.2f}",
         f"Time Taken: {taken:.2f}s",
     )
 
     start = time.perf_counter()
     for e in range(config.epochs):
+        running_loss = 0.
         running_distance = 0.
         running_score = 0.
         net.train()
@@ -109,9 +114,10 @@ def train(
 
             out = net(X)  # Bx2
 
-            distance, score = loss_fn(out, y)
-            distance.backward()
+            loss, distance, score = loss_fn(out, y)
+            loss.backward()
 
+            running_loss += loss.item()
             running_distance += distance.item()
             running_score += score.item()
 
@@ -126,6 +132,7 @@ def train(
 
             if (i+1) % config.log_interval == 0:
                 taken = time.perf_counter() - start
+                avg_loss = running_loss / config.log_interval
                 avg_distance = running_distance / config.log_interval
                 avg_score = running_score / config.log_interval
                 ips = config.log_interval / taken
@@ -135,35 +142,38 @@ def train(
                         "epoch": e,
                         "batch": i,
                         "train_examples": global_step,
+                        "train_loss": avg_loss,
                         "train_score": avg_score,
                         "train_distance": avg_distance,
                     }
                 )
                 print(
                     f"Epoch {e}, step {i} (global step {global_step}),",
-                    f"Avg score: {avg_score:,.2f}, Avg distance: {avg_distance:,.2f}",
+                    f"Avg loss: {avg_loss:.2f}, Avg score: {avg_score:,.2f}, Avg distance: {avg_distance:,.2f}",
                     f"Time Taken: {taken:.2f}s, ({ips:.2f} i/s)",
                 )
 
+                running_loss = 0.
                 running_distance = 0.
                 running_score = 0.
                 start = time.perf_counter()
 
         net.eval()
-        val_distance, val_score = evaluate(net, eval_loader)
+        val_loss, val_distance, val_score = evaluate(net, eval_loader)
         net.train()
         taken = time.perf_counter() - start
         wandb.log(
             {
                 "epoch": e+1,
                 "train_examples": global_step,
+                "eval_loss": val_loss,
                 "eval_distance": val_distance,
                 "eval_score": val_score,
             }
         )
         print(
             f"[Eval] Epoch {e+1},",
-            f"Avg score: {val_score:,.2f}, Avg distance: {val_distance:,.2f}",
+            f"Avg loss: {val_loss:.2f}, Avg score: {val_score:,.2f}, Avg distance: {val_distance:,.2f}",
             f"Time Taken: {taken:.2f}s",
         )
 
@@ -219,7 +229,7 @@ if __name__ == "__main__":
     )
 
     print("Training on device:", device)
-    test_distance, test_score = train(
+    test_loss, test_distance, test_score = train(
         config=train_config,
         net=net,
         optimizer=optimizer,
@@ -229,6 +239,7 @@ if __name__ == "__main__":
     )
     wandb.log(
         {
+            "test_loss": test_loss,
             "test_distance": test_distance,
             "test_score": test_score,
         }
