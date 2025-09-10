@@ -8,8 +8,7 @@ optimizer: "adamW"
 learning_rate: 0.00005
 beta_2: 0.98
 weight_decay: 0.05
-batch_size: 32
+batch_size: 64
 gradient_clipping_norm: 1.0
 early_stop: 3
-num_classes: 1000
-run_name: "You forgot to change the run name"
+run_name: "convnext-tiny"

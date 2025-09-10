@@ -5,18 +5,16 @@ import pandas as pd
 
 from PIL import Image
 from typing import Tuple
-from utils import latlng_to_class
 from torchvision import transforms
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 
 
 class GeoGuessrDataset(Dataset):
-    def __init__(self, csv_file, root_dir, num_classes, transform=None):
+    def __init__(self, csv_file, root_dir, transform=None):
         self.data = pd.read_csv(csv_file, header=None, names=["path", "lat", "lng"])
         self.root_dir = root_dir
         self.transform = transform
-        self.num_classes = num_classes
 
     def __len__(self):
         return len(self.data)
@@ -31,14 +29,13 @@ class GeoGuessrDataset(Dataset):
             image = self.transform(image)
 
         lat, lng = float(row["lat"]), float(row["lng"])
-        lat_class, lng_class = latlng_to_class(lat=lat, lng=lng, num_classes=self.num_classes)
-        target = torch.tensor([lng_class, lat_class], dtype=torch.long)
+        target = torch.tensor([lng, lat], dtype=torch.float32)
 
         return image, target
 
 
 def get_loaders_geoGuessr(
-    batch_size: int, num_classes:int, directory: str="geoGuessrDataset/"
+    batch_size: int, directory: str="geoGuessrDataset/"
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     transform = transforms.Compose(
         [
@@ -52,13 +49,13 @@ def get_loaders_geoGuessr(
 
     datasets = {
         "train": GeoGuessrDataset(
-            os.path.join(directory, "train.csv"), directory, num_classes, transform
+            os.path.join(directory, "train.csv"), directory, transform
         ),
         "val": GeoGuessrDataset(
-            os.path.join(directory, "val.csv"), directory, num_classes, transform
+            os.path.join(directory, "val.csv"), directory, transform
         ),
         "test": GeoGuessrDataset(
-            os.path.join(directory, "test.csv"), directory, num_classes, transform
+            os.path.join(directory, "test.csv"), directory, transform
         ),
     }
 

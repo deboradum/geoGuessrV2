@@ -43,7 +43,7 @@ class GeoGuessrModel(nn.Module):
         return out
 
 
-def get_convnext(size: str, num_classes: int, freeze_weights: bool) -> nn.Module:
+def get_convnext(size: str, freeze_weights: bool) -> nn.Module:
     if size == "tiny":  # 29M params
         weights = torchvision.models.ConvNeXt_Tiny_Weights.DEFAULT
         model = torchvision.models.convnext_tiny
@@ -66,9 +66,9 @@ def get_convnext(size: str, num_classes: int, freeze_weights: bool) -> nn.Module
     return GeoGuessrModel(backbone.features, num_features, freeze_weights)
 
 
-def get_net( num_classes: int, freeze_weights: bool, net_name:str="convnext-tiny", device="cpu") -> torch.nn.Module | Any:
+def get_net(freeze_weights: bool, net_name:str="convnext-tiny", device="cpu") -> torch.nn.Module | Any:
     if "convnext" in net_name:
-        return get_convnext(net_name.split("-")[-1], num_classes, freeze_weights).to(device)
+        return get_convnext(net_name.split("-")[-1], freeze_weights).to(device)
     else:
         print(f"{net_name} not supported")
         exit(0)

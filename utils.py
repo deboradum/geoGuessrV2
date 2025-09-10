@@ -19,7 +19,6 @@ class TrainConfig:
     batch_size: int = 64
     gradient_clipping_norm: float = 1.0
     early_stop: int = 3
-    num_classes: int = 1000
     run_name: str = "You forgot to change the run name"
 
 
@@ -41,12 +40,3 @@ def get_optimizer(config: TrainConfig, net: torch.nn.Module) -> torch.optim.Opti
         raise Exception("Invalid optimizer")
 
     return optimizer
-
-
-def latlng_to_class(lat: float, lng: float, num_classes: int) -> Tuple[int, int]:
-    # lat in [-90, 90] and lng in [-180, 180]
-    lat_class = int(((lat + 90) / 180) * num_classes)
-    lng_class = int(((lng + 180) / 360) * num_classes)
-    lat_class = min(max(lat_class, 0), num_classes - 1)
-    lng_class = min(max(lng_class, 0), num_classes - 1)
-    return lat_class, lng_class
