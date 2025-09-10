@@ -11,8 +11,7 @@ from models import get_net
 from dataset import get_loaders_geoGuessr
 from utils import TrainConfig, load_config, get_optimizer
 
-EARTH_RADIUS = 6371000
-MAX_DISTANCE = 20000000.0
+EARTH_RADIUS = 6371000  # meter
 
 device = torch.device(
     "mps"
@@ -22,102 +21,48 @@ device = torch.device(
     else "cpu"
 )
 
+# Haversine distance loss and geoguessr score
 def loss_fn(pred, target):
-    criterion = nn.CrossEntropyLoss()
+    pred_lon, pred_lat = pred[:, 0], pred[:, 1]
+    true_lon, true_lat = target[:, 0], target[:, 1]
 
-    lon_logits = pred[:, :, 0]
-    lat_logits = pred[:, :, 1]
+    pred_lon = torch.deg2rad(pred_lon)
+    pred_lat = torch.deg2rad(pred_lat)
+    true_lon = torch.deg2rad(true_lon)
+    true_lat = torch.deg2rad(true_lat)
 
-    # targets: B x 2
-    lon_target = target[:, 0]
-    lat_target = target[:, 1]
+    delta_phi = true_lat - pred_lat
+    delta_lambda = true_lon - pred_lon
 
-    loss = criterion(lon_logits, lon_target) + criterion(lat_logits, lat_target)
-
-    return loss
-
-
-# Gets average haversine distance and geoguessr score
-def get_distance_and_geoguessr_score(pred_logits, truth):
-    pred_classes = pred_logits.argmax(dim=1)  # B x 2
-    lon_class = pred_classes[:, 0]
-    lat_class = pred_classes[:, 1]
-
-    # Convert class indices to degrees
-    pred_lon = lon_class.float() / (train_config.num_classes - 1) * 360 - 180  # [-180, 180]
-    pred_lat = lat_class.float() / (train_config.num_classes - 1) * 180 - 90    # [-90, 90]
-
-    phi_pred = torch.deg2rad(pred_lat)
-    phi_truth = torch.deg2rad(truth[:, 1])
-    delta_phi = torch.deg2rad(truth[:, 1] - pred_lat)
-    delta_lambda = torch.deg2rad(truth[:, 0] - pred_lon)
-
-    a = torch.sin(delta_phi / 2) ** 2 + torch.cos(phi_pred) * torch.cos(phi_truth) * torch.sin(delta_lambda / 2) ** 2
+    a = torch.sin(delta_phi / 2) ** 2 + torch.cos(pred_lat) * torch.cos(true_lat) * torch.sin(delta_lambda / 2) ** 2
     c = 2 * torch.atan2(torch.sqrt(a), torch.sqrt(1 - a))
-    distance = EARTH_RADIUS * c / 1000 # km
+    distance = EARTH_RADIUS * c / 1000
 
-    scaling_factor = 2000  # km
-    score = 5000 * torch.exp(-distance / scaling_factor)
+    with torch.no_grad():
+        scaling_factor = 2000  # km
+        score = 5000 * torch.exp(-distance / scaling_factor)
 
-    return torch.mean(distance), torch.mean(score)
-
-
-def get_accs(pred_logits, targets):
-    lon_logits = pred_logits[:, :, 0]  # B x NUM_CLASSES
-    lat_logits = pred_logits[:, :, 1]  # B x NUM_CLASSES
-
-    # Top-1 accuracy
-    lon_top1 = lon_logits.argmax(dim=1) == targets[:, 0]
-    lat_top1 = lat_logits.argmax(dim=1) == targets[:, 1]
-
-    # Top-3 accuracy
-    lon_top3 = torch.topk(lon_logits, k=3, dim=1).indices
-    lat_top3 = torch.topk(lat_logits, k=3, dim=1).indices
-
-    lon_top3_acc = (lon_top3 == targets[:, 0].unsqueeze(1)).any(dim=1)
-    lat_top3_acc = (lat_top3 == targets[:, 1].unsqueeze(1)).any(dim=1)
-
-    return (
-        lon_top1.float().mean(),
-        lat_top1.float().mean(),
-        lon_top3_acc.float().mean(),
-        lat_top3_acc.float().mean()
-    )
+    return distance.mean(), score.mean()
 
 
 def evaluate(net, loader):
-    val_loss = 0.0
     val_distance = 0.0
     val_score = 0.0
-    val_lon_acc = 0.0
-    val_lat_acc = 0.0
-    val_lon_top3_acc = 0.0
-    val_lat_top3_acc = 0.0
+    total_samples = 0
     with torch.no_grad():
         for X, y in loader:
             X, y = X.to(device), y.to(device)
             out = net(X)  # BxCx2
+            distance, score = loss_fn(out, y)
+            bs = X.size(0)
 
-            loss = loss_fn(out, y)
-            distance, score = get_distance_and_geoguessr_score(out, y)
-            lon_acc, lat_acc, lon_top3_acc, lat_top3_acc = get_accs(out, y)
+            val_distance += distance.item() * bs
+            val_score += score.item() * bs
+            total_samples += bs
+    val_distance /= total_samples
+    val_score /= total_samples
 
-            val_loss += loss.item()
-            val_distance += distance.item()
-            val_score += score.item()
-            val_lon_acc += lon_acc.item()
-            val_lat_acc += lat_acc.item()
-            val_lon_top3_acc += lon_top3_acc.item()
-            val_lat_top3_acc += lat_top3_acc.item()
-    val_loss /= len(loader)
-    val_distance /= len(loader)
-    val_score /= len(loader)
-    val_lon_acc /= len(loader)
-    val_lat_acc /= len(loader)
-    val_lon_top3_acc /= len(loader)
-    val_lat_top3_acc /= len(loader)
-
-    return val_loss, val_distance, val_score, val_lon_acc, val_lat_acc, val_lon_top3_acc, val_lat_top3_acc
+    return val_distance, val_score
 
 
 def train(
@@ -128,69 +73,47 @@ def train(
     eval_loader: torch.utils.data.DataLoader,
     test_loader: torch.utils.data.DataLoader
 ):
-    best_loss = float('inf')
+    best_distance = float('inf')
     best_net = None
     early_stop_counter = 0
-
     global_step = 0
-    for e in range(config.epochs):
-        # Evaluate
-        start = time.perf_counter()
-        net.eval()
-        val_loss, val_distance, val_score, val_lon_acc, val_lat_acc, val_lon_top3_acc, val_lat_top3_acc = evaluate(net, eval_loader)
-        net.train()
-        taken = time.perf_counter() - start
-        wandb.log(
-            {
-                "epoch": e,
-                "train_examples": global_step,
-                "eval_loss": val_loss,
-                "eval_distance": val_distance,
-                "eval_score": val_score,
-                "eval_lon_acc": val_lon_acc,
-                "eval_lat_acc": val_lat_acc,
-                "eval_lon_top3_acc": val_lon_top3_acc,
-                "eval_lat_top3_acc": val_lat_top3_acc,
-            }
-        )
-        print(
-            f"[Eval] Epoch {e},",
-            f"Avg Loss: {val_loss:.3f}, Avg score: {val_score:,.2f}, Avg distance: {val_distance:,.2f}",
-            f"Avg lon acc: {val_lon_acc:.2f}, Avg lon top-3 acc: {val_lon_top3_acc:.2f}, Avg lat acc: {val_lat_acc:.2f} Avg lat top-3 acc: {val_lat_top3_acc:.2f},",
-            f"Time Taken: {taken:.2f}s",
-        )
-        start = time.perf_counter()
 
-        # Start training
-        running_loss = 0.
+    # Evaluate
+    start = time.perf_counter()
+    net.eval()
+    val_distance, val_score = evaluate(net, eval_loader)
+    net.train()
+    taken = time.perf_counter() - start
+    wandb.log(
+        {
+            "epoch": 0,
+            "train_examples": global_step,
+            "eval_distance": val_distance,
+            "eval_score": val_score,
+        }
+    )
+    print(
+        f"[Eval] Epoch 0,",
+        f"Avg score: {val_score:,.2f}, Avg distance: {val_distance:,.2f}",
+        f"Time Taken: {taken:.2f}s",
+    )
+
+    start = time.perf_counter()
+    for e in range(config.epochs):
         running_distance = 0.
         running_score = 0.
-        running_lon_acc = 0.
-        running_lat_acc = 0.
-        running_lon_top3_acc = 0.
-        running_lat_top3_acc = 0.
         net.train()
-        s = time.perf_counter()
         for i, (X, y) in enumerate(train_loader):
             X, y = X.to(device), y.to(device)
             bs = X.shape[0]
 
-            out = net(X)  # BxCx2
+            out = net(X)  # Bx2
 
-            loss = loss_fn(out, y)
-            loss.backward()
+            distance, score = loss_fn(out, y)
+            distance.backward()
 
-            with torch.no_grad():
-                distance, score = get_distance_and_geoguessr_score(out, y)
-                lon_acc, lat_acc, lon_top3_acc, lat_top3_acc = get_accs(out, y)
-
-                running_loss += loss.item()
-                running_distance += distance.item()
-                running_score += score.item()
-                running_lon_acc += lon_acc.item()
-                running_lat_acc += lat_acc.item()
-                running_lon_top3_acc += lon_top3_acc.item()
-                running_lat_top3_acc += lat_top3_acc.item()
+            running_distance += distance.item()
+            running_score += score.item()
 
             if config.gradient_clipping_norm != 0.0:
                 torch.nn.utils.clip_grad_norm_(
@@ -203,13 +126,8 @@ def train(
 
             if (i+1) % config.log_interval == 0:
                 taken = time.perf_counter() - start
-                avg_loss = running_loss / config.log_interval
                 avg_distance = running_distance / config.log_interval
                 avg_score = running_score / config.log_interval
-                avg_lon_acc = running_lon_acc / config.log_interval
-                avg_lat_acc = running_lat_acc / config.log_interval
-                avg_lon_top3_acc = running_lon_top3_acc / config.log_interval
-                avg_lat_top3_acc = running_lat_top3_acc / config.log_interval
                 ips = config.log_interval / taken
 
                 wandb.log(
@@ -217,34 +135,41 @@ def train(
                         "epoch": e,
                         "batch": i,
                         "train_examples": global_step,
-                        "train_loss": avg_loss,
                         "train_score": avg_score,
                         "train_distance": avg_distance,
-                        "train_lon_acc": avg_lon_acc,
-                        "train_lat_acc": avg_lat_acc,
-                        "train_lon_top3_acc": avg_lon_top3_acc,
-                        "train_lat_top3_acc": avg_lat_top3_acc,
                     }
                 )
                 print(
                     f"Epoch {e}, step {i} (global step {global_step}),",
-                    f"Avg Loss: {avg_loss:.3f}, Avg score: {avg_score:,.2f}, Avg distance: {avg_distance:,.2f}",
-                    f"Avg lon acc: {avg_lon_acc:.2f}, Avg lon top-3 acc: {avg_lon_top3_acc:.2f}, Avg lat acc: {avg_lat_acc:.2f} Avg lat top-3 acc: {avg_lat_top3_acc:.2f},",
+                    f"Avg score: {avg_score:,.2f}, Avg distance: {avg_distance:,.2f}",
                     f"Time Taken: {taken:.2f}s, ({ips:.2f} i/s)",
                 )
 
-                running_loss = 0.
                 running_distance = 0.
                 running_score = 0.
-                running_lon_acc = 0.
-                running_lat_acc = 0.
-                running_lon_top3_acc = 0.
-                running_lat_top3_acc = 0.
                 start = time.perf_counter()
 
+        net.eval()
+        val_distance, val_score = evaluate(net, eval_loader)
+        net.train()
+        taken = time.perf_counter() - start
+        wandb.log(
+            {
+                "epoch": e+1,
+                "train_examples": global_step,
+                "eval_distance": val_distance,
+                "eval_score": val_score,
+            }
+        )
+        print(
+            f"[Eval] Epoch {e+1},",
+            f"Avg score: {val_score:,.2f}, Avg distance: {val_distance:,.2f}",
+            f"Time Taken: {taken:.2f}s",
+        )
+
         # Check for early stop
-        if val_loss < best_loss:
-            best_loss = val_loss
+        if val_distance < best_distance:
+            best_distance = val_distance
             best_net = copy.deepcopy(net)
         else:
             early_stop_counter += 1
@@ -281,9 +206,8 @@ if __name__ == "__main__":
         "parameters": {
             "optimizer": {"values": ["adam", "adamW", "sgd"]},
             "beta_2": {"values": [0.95, 0.97, 0.99, 0.999]},
-            "learning_rate": {"min": 5e-4, "max": 1e-3},
+            "learning_rate": {"min": 8e-5, "max": 5e-4},
             "weight_decay": {"values": [0.0, 0.01, 0.05]},
-            "num_classes": {"values": [100, 500]},
         },
     }
 
@@ -296,7 +220,6 @@ if __name__ == "__main__":
         train_config.beta_2 = config.beta_2
         train_config.learning_rate = config.learning_rate
         train_config.weight_decay = config.weight_decay
-        train_config.num_classes = config.num_classes
 
         config_dict = {**vars(train_config)}
 
@@ -318,7 +241,7 @@ if __name__ == "__main__":
         )
 
         print("Training on device:", device)
-        test_loss, test_distance, test_score, test_lon_acc, test_lat_acc, test_lon_top3_acc, test_lat_top3_acc = train(
+        test_loss, test_distance, test_score = train(
             config=train_config,
             net=net,
             optimizer=optimizer,
@@ -331,10 +254,6 @@ if __name__ == "__main__":
                 "test_loss": test_loss,
                 "test_distance": test_distance,
                 "test_score": test_score,
-                "test_lon_acc": test_lon_acc,
-                "test_lat_acc": test_lat_acc,
-                "test_lon_top3_acc": test_lon_top3_acc,
-                "test_lat_top3_acc": test_lat_top3_acc,
             }
         )
 

@@ -6,7 +6,7 @@ import torch.nn as nn
 from typing import Any
 
 class GeoGuessrModel(nn.Module):
-    def __init__(self, backbone: nn.Module, num_features: int, num_classes: int, freeze_weights: bool):
+    def __init__(self, backbone: nn.Module, num_features: int, freeze_weights: bool):
         super().__init__()
         self.backbone = backbone
         if freeze_weights:
@@ -15,26 +15,31 @@ class GeoGuessrModel(nn.Module):
 
         self.pool = nn.AdaptiveAvgPool2d(1)
 
+        # Longitude regression head
         self.lon_head = nn.Sequential(
             nn.Linear(num_features, 512),
             nn.ReLU(),
-            nn.Linear(512, num_classes)
+            nn.Linear(512, 1),
+            nn.Tanh()  # map to [-1, 1]
         )
+
+        # Latitude regression head
         self.lat_head = nn.Sequential(
             nn.Linear(num_features, 512),
             nn.ReLU(),
-            nn.Linear(512, num_classes)
+            nn.Linear(512, 1),
+            nn.Tanh()  # map to [-1, 1]
         )
 
     def forward(self, x):
         x = self.backbone(x)
-        x = self.pool(x)  # (B, C, 1, 1)
+        x = self.pool(x)
         x = torch.flatten(x, 1)
 
-        lon = self.lon_head(x)
-        lat = self.lat_head(x)
-        out = torch.stack([lon, lat], dim=-1)  # BxCx2
+        lon = self.lon_head(x) * 180  # scale to [-180, 180]
+        lat = self.lat_head(x) * 90  # scale to [-90, 90]
 
+        out = torch.cat([lon, lat], dim=1)  # (B, 2)
         return out
 
 
@@ -58,7 +63,7 @@ def get_convnext(size: str, num_classes: int, freeze_weights: bool) -> nn.Module
     backbone = model(weights=weights)
     num_features = backbone.classifier[2].in_features
 
-    return GeoGuessrModel(backbone.features, num_features, num_classes, freeze_weights)
+    return GeoGuessrModel(backbone.features, num_features, freeze_weights)
 
 
 def get_net( num_classes: int, freeze_weights: bool, net_name:str="convnext-tiny", device="cpu") -> torch.nn.Module | Any:
