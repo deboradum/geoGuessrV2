@@ -50,6 +50,8 @@ def evaluate(net, loader):
     val_distance = 0.0
     val_score = 0.0
     total_samples = 0
+
+    net.eval()
     with torch.no_grad():
         for X, y in loader:
             X, y = X.to(device), y.to(device)
@@ -57,15 +59,15 @@ def evaluate(net, loader):
             loss, distance, score = loss_fn(out, y)
             bs = X.size(0)
 
-            val_loss += loss.item() * bs
-            val_distance += distance.item() * bs
-            val_score += score.item() * bs
+            val_loss += loss * bs
+            val_distance += distance * bs
+            val_score += score * bs
             total_samples += bs
     val_loss /= total_samples
     val_distance /= total_samples
     val_score /= total_samples
 
-    return val_loss, val_distance, val_score
+    return val_loss.item(), val_distance.item(), val_score.item()
 
 
 def train(
