@@ -178,6 +178,7 @@ def train(
             f"Avg loss: {val_loss:.2f}, Avg score: {val_score:,.2f}, Avg distance: {val_distance:,.2f}",
             f"Time Taken: {taken:.2f}s",
         )
+        start = time.perf_counter()
 
         # Check for early stop
         if val_distance < best_distance:
