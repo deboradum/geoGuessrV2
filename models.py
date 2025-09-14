@@ -21,19 +21,23 @@ class GeoGuessrModel(nn.Module):
 
         self.norm = nn.LayerNorm(num_features)
 
+        widening_factor = 2
+        hidden_size = num_features * widening_factor
         # Longitude regression head
         self.lon_head = nn.Sequential(
-            nn.Linear(num_features, 512),
+            nn.Linear(num_features, hidden_size),
+            nn.LayerNorm(hidden_size),
             nn.ReLU(),
-            nn.Linear(512, 1),
+            nn.Linear(hidden_size, 1),
             nn.Tanh()  # map to [-1, 1]
         )
 
         # Latitude regression head
         self.lat_head = nn.Sequential(
-            nn.Linear(num_features, 512),
+            nn.Linear(num_features, hidden_size),
+            nn.LayerNorm(hidden_size),
             nn.ReLU(),
-            nn.Linear(512, 1),
+            nn.Linear(hidden_size, 1),
             nn.Tanh()  # map to [-1, 1]
         )
 
