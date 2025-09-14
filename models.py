@@ -19,6 +19,8 @@ class GeoGuessrModel(nn.Module):
         if not self.is_vit:
             self.pool = nn.AdaptiveAvgPool2d(1)
 
+        self.norm = nn.LayerNorm(num_features)
+
         # Longitude regression head
         self.lon_head = nn.Sequential(
             nn.Linear(num_features, 512),
@@ -44,6 +46,7 @@ class GeoGuessrModel(nn.Module):
             x = self.pool(x)
             x = torch.flatten(x, 1)
 
+        x = self.norm(x)
         lon = self.lon_head(x) * 180  # scale to [-180, 180]
         lat = self.lat_head(x) * 90  # scale to [-90, 90]
 
