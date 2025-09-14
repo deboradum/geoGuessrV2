@@ -94,7 +94,7 @@ def get_vit(size: str, freeze_weights: bool) -> nn.Module:
         print(f"{size} not supported")
         exit(0)
 
-    num_features = backbone.model.config.hidden_size
+    num_features = backbone.config.hidden_size
 
     return GeoGuessrModel(backbone, num_features, freeze_weights, is_vit=True)
 
