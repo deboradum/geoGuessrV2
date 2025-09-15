@@ -5,10 +5,10 @@ log_interval: 10
 seed: 123
 epochs: 2
 optimizer: "adamW"
-learning_rate: 0.00005
+learning_rate: 0.000095
 beta_2: 0.999
 weight_decay: 0.01
 batch_size: 64
-gradient_clipping_norm: 1.0
+gradient_clipping_norm: 2.0
 early_stop: 3
 run_name: "vit-s+16"
