@@ -9,6 +9,10 @@ from PIL import ImageGrab
 from dotenv import load_dotenv
 from urllib.parse import urlparse, parse_qs
 
+import chromedriver_autoinstaller
+chromedriver_autoinstaller.install()
+service = Service()
+
 load_dotenv()
 
 options = webdriver.ChromeOptions()
@@ -16,7 +20,6 @@ options.add_argument("--disable-gpu")
 options.add_argument("--window-size=1920x1080")
 options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
 
-service = Service("chromedriver")
 browser = webdriver.Chrome(service=service, options=options)
 
 known_coords = {}
@@ -117,13 +120,13 @@ def get_coords(logs):
 
 def take_screenshot(directory, panoidID):
     i = 1
-    while os.path.exists(os.path.join(directory, f"{i}.png")):
+    while os.path.exists(os.path.join(directory, f"{i}.jpg")):
         i += 1
 
     screenshot = ImageGrab.grab(bbox=(0, -1000, 1600, -100))
-
+    screenshot = screenshot.convert("RGB")
     screenshot_path = os.path.join(directory, f"{panoidID}.png")
-    screenshot.save(screenshot_path)
+    screenshot.save(screenshot_path, "JPEG", quality=95)
 
     print(f"Screenshot saved to {screenshot_path}")
 
@@ -162,7 +165,7 @@ def next_round(counter):
 if __name__ == "__main__":
     num_images = 21000
     geo_guessr_url = "https://www.geoguessr.com/"
-    dataset_dir = "geoGuessrDataset/"
+    dataset_dir = "geoGuessrDatasetV2/"
 
     load_cookies(browser, "cookies.txt", geo_guessr_url)
     try:
