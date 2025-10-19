@@ -127,6 +127,8 @@ def train(
     start = time.perf_counter()
     for e in range(config.epochs):
         running_metrics_sums = defaultdict(float)
+        total_grad_norm_before = 0.
+        total_grad_norm_after = 0.
 
         net.train()
         for i, (X, y) in enumerate(train_loader):
@@ -143,9 +145,12 @@ def train(
                 running_metrics_sums[key] += value.item()
 
             if config.gradient_clipping_norm != 0.0:
-                torch.nn.utils.clip_grad_norm_(
+                grad_norm_before = torch.nn.utils.clip_grad_norm_(
                     net.parameters(), config.gradient_clipping_norm
                 )
+                grad_norm_after = torch.sqrt(sum(p.grad.norm()**2 for p in net.parameters() if p.grad is not None))
+                total_grad_norm_before += grad_norm_before.item()
+                total_grad_norm_after += grad_norm_after.item()
 
             optimizer.step()
             optimizer.zero_grad()
@@ -163,6 +168,7 @@ def train(
                     {
                         "epoch": e,
                         "batch": i,
+                        "train/iterations_per_second": ips,
                         "train/examples": global_step,
                         "train/loss_avg": train_metrics.get("loss_avg", -1),
                         "train/loss_std": train_metrics.get("loss_std", -1),
@@ -174,6 +180,8 @@ def train(
                         "train/true_lon_std": train_metrics.get("true_lon_std", -1),
                         "train/pred_lat_std": train_metrics.get("pred_lat_std", -1),
                         "train/true_lat_std": train_metrics.get("true_lat_std", -1),
+                        "train/grad_norm_before_clip": total_grad_norm_before / config.log_interval,
+                        "train/grad_norm_after_clip": total_grad_norm_after / config.log_interval,
                     }
                 )
                 print(
@@ -186,6 +194,8 @@ def train(
                 )
 
                 running_metrics_sums = defaultdict(float)
+                total_grad_norm_before = 0.
+                total_grad_norm_after = 0.
                 start = time.perf_counter()
 
         # Evaluate
