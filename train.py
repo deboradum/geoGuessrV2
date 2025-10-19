@@ -4,14 +4,13 @@ import torch
 import wandb
 import argparse
 
-import torch.nn as nn
-import torch.nn.functional as F
+from collections import defaultdict
 
 from models import get_net
 from dataset import get_loaders_geoGuessr
 from utils import TrainConfig, load_config, get_optimizer
 
-EARTH_RADIUS = 6371000  # meter
+EARTH_RADIUS = 6371000  # meters
 
 device = torch.device(
     "mps"
@@ -42,13 +41,22 @@ def loss_fn(pred, target):
         scaling_factor = 2000  # km
         score = 5000 * torch.exp(-distance / scaling_factor)
 
-    return c.mean(), distance.mean(), score.mean()
+    return {
+        "loss_avg": c.mean(),
+        "loss_std": c.std(),
+        "distance_avg": distance.mean(),
+        "distance_std": distance.std(),
+        "score_avg": score.mean(),
+        "score_std": score.std(),
+        "pred_lon_std": pred_lon.std(),
+        "true_lon_std": true_lon.std(),
+        "pred_lat_std": pred_lat.std(),
+        "true_lat_std": true_lat.std(),
+    }
 
 
 def evaluate(net, loader):
-    val_loss = 0.0
-    val_distance = 0.0
-    val_score = 0.0
+    val_metrics_sums = defaultdict(float)
     total_samples = 0
 
     net.eval()
@@ -56,18 +64,20 @@ def evaluate(net, loader):
         for X, y in loader:
             X, y = X.to(device), y.to(device)
             out = net(X)  # BxCx2
-            loss, distance, score = loss_fn(out, y)
+            batch_metrics = loss_fn(out, y)
             bs = X.size(0)
 
-            val_loss += loss * bs
-            val_distance += distance * bs
-            val_score += score * bs
-            total_samples += bs
-    val_loss /= total_samples
-    val_distance /= total_samples
-    val_score /= total_samples
+            for key, value_tensor in batch_metrics.items():
+                val_metrics_sums[key] += value_tensor.item() * bs
 
-    return val_loss.item(), val_distance.item(), val_score.item()
+            total_samples += bs
+
+    final_metrics_avg = {}
+    if total_samples > 0:
+        for key, total_sum in val_metrics_sums.items():
+            final_metrics_avg[key] = total_sum / total_samples
+
+    return final_metrics_avg
 
 
 def train(
@@ -86,42 +96,51 @@ def train(
     # Evaluate
     start = time.perf_counter()
     net.eval()
-    val_loss, val_distance, val_score = evaluate(net, eval_loader)
+    val_metrics = evaluate(net, eval_loader)
     net.train()
     taken = time.perf_counter() - start
     wandb.log(
         {
             "epoch": 0,
-            "train_examples": global_step,
-            "eval_loss": val_loss,
-            "eval_distance": val_distance,
-            "eval_score": val_score,
+            "train/examples": global_step,
+            "eval/loss_avg": val_metrics.get("loss_avg", -1),
+            "eval/loss_std": val_metrics.get("loss_std", -1),
+            "eval/distance_avg": val_metrics.get("distance_avg", -1),
+            "eval/distance_std": val_metrics.get("distance_std", -1),
+            "eval/score_avg": val_metrics.get("score_avg", -1),
+            "eval/score_std": val_metrics.get("score_std", -1),
+            "eval/pred_lon_std": val_metrics.get("pred_lon_std", -1),
+            "eval/true_lon_std": val_metrics.get("true_lon_std", -1),
+            "eval/pred_lat_std": val_metrics.get("pred_lat_std", -1),
+            "eval/true_lat_std": val_metrics.get("true_lat_std", -1),
         }
     )
     print(
-        f"[Eval] Epoch 0,",
-        f"Avg loss: {val_loss:.2f}, Avg score: {val_score:,.2f}, Avg distance: {val_distance:,.2f}",
-        f"Time Taken: {taken:.2f}s",
+        f"[Eval] Epoch 0, Time: {taken:.2f}s\n"
+        f"  Loss:     {val_metrics.get('loss_avg', 0.0):.2f} ± {val_metrics.get('loss_std', 0.0):.2f}\n"
+        f"  Score:    {val_metrics.get('score_avg', 0.0):,.2f} ± {val_metrics.get('score_std', 0.0):,.2f}\n"
+        f"  Distance: {val_metrics.get('distance_avg', 0.0):,.2f} ± {val_metrics.get('distance_std', 0.0):,.2f} km\n"
+        f"  Std (Pred Lon/Lat): {val_metrics.get('pred_lon_std', 0.0):.2f} / {val_metrics.get('pred_lat_std', 0.0):.2f}\n"
+        f"  Std (True Lon/Lat): {val_metrics.get('true_lon_std', 0.0):.2f} / {val_metrics.get('true_lat_std', 0.0):.2f}"
     )
 
     start = time.perf_counter()
     for e in range(config.epochs):
-        running_loss = 0.
-        running_distance = 0.
-        running_score = 0.
+        running_metrics_sums = defaultdict(float)
+
         net.train()
         for i, (X, y) in enumerate(train_loader):
             X, y = X.to(device), y.to(device)
             bs = X.shape[0]
 
             out = net(X)  # Bx2
+            batch_metrics = loss_fn(out, y)
 
-            loss, distance, score = loss_fn(out, y)
+            loss = batch_metrics["loss_avg"]
             loss.backward()
 
-            running_loss += loss.item()
-            running_distance += distance.item()
-            running_score += score.item()
+            for key, value in batch_metrics.items():
+                running_metrics_sums[key] += value.item()
 
             if config.gradient_clipping_norm != 0.0:
                 torch.nn.utils.clip_grad_norm_(
@@ -134,55 +153,76 @@ def train(
 
             if (i+1) % config.log_interval == 0:
                 taken = time.perf_counter() - start
-                avg_loss = running_loss / config.log_interval
-                avg_distance = running_distance / config.log_interval
-                avg_score = running_score / config.log_interval
                 ips = config.log_interval / taken
+
+                train_metrics = {}
+                for key, sum_of_avgs in running_metrics_sums.items():
+                    train_metrics[key] = sum_of_avgs / config.log_interval
 
                 wandb.log(
                     {
                         "epoch": e,
                         "batch": i,
-                        "train_examples": global_step,
-                        "train_loss": avg_loss,
-                        "train_score": avg_score,
-                        "train_distance": avg_distance,
+                        "train/examples": global_step,
+                        "train/loss_avg": train_metrics.get("loss_avg", -1),
+                        "train/loss_std": train_metrics.get("loss_std", -1),
+                        "train/distance_avg": train_metrics.get("distance_avg", -1),
+                        "train/distance_std": train_metrics.get("distance_std", -1),
+                        "train/score_avg": train_metrics.get("score_avg", -1),
+                        "train/score_std": train_metrics.get("score_std", -1),
+                        "train/pred_lon_std": train_metrics.get("pred_lon_std", -1),
+                        "train/true_lon_std": train_metrics.get("true_lon_std", -1),
+                        "train/pred_lat_std": train_metrics.get("pred_lat_std", -1),
+                        "train/true_lat_std": train_metrics.get("true_lat_std", -1),
                     }
                 )
                 print(
-                    f"Epoch {e}, step {i} (global step {global_step}),",
-                    f"Avg loss: {avg_loss:.2f}, Avg score: {avg_score:,.2f}, Avg distance: {avg_distance:,.2f}",
-                    f"Time Taken: {taken:.2f}s, ({ips:.2f} i/s)",
+                    f"Epoch {e}, step {i} (Global {global_step}), Time: {taken:.2f}s ({ips:.2f} i/s)\n"
+                    f"  Loss:     {train_metrics.get('loss_avg', 0.0):.2f} ± {train_metrics.get('loss_std', 0.0):.2f}\n" # FIXED KEY
+                    f"  Score:    {train_metrics.get('score_avg', 0.0):,.2f} ± {train_metrics.get('score_std', 0.0):,.2f}\n" # FIXED KEY
+                    f"  Distance: {train_metrics.get('distance_avg', 0.0):,.2f} ± {train_metrics.get('distance_std', 0.0):,.2f} km\n" # FIXED KEY
+                    f"  Std (Pred Lon/Lat): {train_metrics.get('pred_lon_std', 0.0):.2f} / {train_metrics.get('pred_lat_std', 0.0):.2f}\n" # FIXED KEY
+                    f"  Std (True Lon/Lat): {train_metrics.get('true_lon_std', 0.0):.2f} / {train_metrics.get('true_lat_std', 0.0):.2f}" # FIXED KEY
                 )
 
-                running_loss = 0.
-                running_distance = 0.
-                running_score = 0.
+                running_metrics_sums = defaultdict(float)
                 start = time.perf_counter()
 
+        # Evaluate
+        start = time.perf_counter()
         net.eval()
-        val_loss, val_distance, val_score = evaluate(net, eval_loader)
+        val_metrics = evaluate(net, eval_loader)
         net.train()
         taken = time.perf_counter() - start
         wandb.log(
             {
                 "epoch": e+1,
-                "train_examples": global_step,
-                "eval_loss": val_loss,
-                "eval_distance": val_distance,
-                "eval_score": val_score,
+                "train/examples": global_step,
+                "eval/loss_avg": val_metrics.get("loss_avg", -1),
+                "eval/loss_std": val_metrics.get("loss_std", -1),
+                "eval/distance_avg": val_metrics.get("distance_avg", -1),
+                "eval/distance_std": val_metrics.get("distance_std", -1),
+                "eval/score_avg": val_metrics.get("score_avg", -1),
+                "eval/score_std": val_metrics.get("score_std", -1),
+                "eval/pred_lon_std": val_metrics.get("pred_lon_std", -1),
+                "eval/true_lon_std": val_metrics.get("true_lon_std", -1),
+                "eval/pred_lat_std": val_metrics.get("pred_lat_std", -1),
+                "eval/true_lat_std": val_metrics.get("true_lat_std", -1),
             }
         )
         print(
-            f"[Eval] Epoch {e+1},",
-            f"Avg loss: {val_loss:.2f}, Avg score: {val_score:,.2f}, Avg distance: {val_distance:,.2f}",
-            f"Time Taken: {taken:.2f}s",
+            f"[Eval] Epoch {e+1}, Time: {taken:.2f}s\n"
+            f"  Loss:     {val_metrics.get('loss_avg', 0.0):.2f} ± {val_metrics.get('loss_std', 0.0):.2f}\n"
+            f"  Score:    {val_metrics.get('score_avg', 0.0):,.2f} ± {val_metrics.get('score_std', 0.0):,.2f}\n"
+            f"  Distance: {val_metrics.get('distance_avg', 0.0):,.2f} ± {val_metrics.get('distance_std', 0.0):,.2f} km\n"
+            f"  Std (Pred Lon/Lat): {val_metrics.get('pred_lon_std', 0.0):.2f} / {val_metrics.get('pred_lat_std', 0.0):.2f}\n"
+            f"  Std (True Lon/Lat): {val_metrics.get('true_lon_std', 0.0):.2f} / {val_metrics.get('true_lat_std', 0.0):.2f}"
         )
         start = time.perf_counter()
 
         # Check for early stop
-        if val_distance < best_distance:
-            best_distance = val_distance
+        if val_metrics["distance_avg"] < best_distance:
+            best_distance = val_metrics["distance_avg"]
             best_net = copy.deepcopy(net)
         else:
             early_stop_counter += 1
@@ -232,7 +272,7 @@ if __name__ == "__main__":
     )
 
     print("Training on device:", device)
-    test_loss, test_distance, test_score = train(
+    test_metrics = train(
         config=train_config,
         net=net,
         optimizer=optimizer,
@@ -242,8 +282,15 @@ if __name__ == "__main__":
     )
     wandb.log(
         {
-            "test_loss": test_loss,
-            "test_distance": test_distance,
-            "test_score": test_score,
+            "test/loss_avg": test_metrics.get("loss_avg", -1),
+            "test/loss_std": test_metrics.get("loss_std", -1),
+            "test/distance_avg": test_metrics.get("distance_avg", -1),
+            "test/distance_std": test_metrics.get("distance_std", -1),
+            "test/score_avg": test_metrics.get("score_avg", -1),
+            "test/score_std": test_metrics.get("score_std", -1),
+            "test/pred_lon_std": test_metrics.get("pred_lon_std", -1),
+            "test/true_lon_std": test_metrics.get("true_lon_std", -1),
+            "test/pred_lat_std": test_metrics.get("pred_lat_std", -1),
+            "test/true_lat_std": test_metrics.get("true_lat_std", -1),
         }
     )
