@@ -2,6 +2,7 @@ import torch
 import torchvision
 
 import torch.nn as nn
+import torch.nn.functional as F
 
 from transformers import AutoModel
 from typing import Any
@@ -23,23 +24,14 @@ class GeoGuessrModel(nn.Module):
 
         widening_factor = 2
         hidden_size = num_features * widening_factor
-        # Longitude regression head
-        self.lon_head = nn.Sequential(
+
+        self.head = nn.Sequential(
             nn.Linear(num_features, hidden_size),
             nn.LayerNorm(hidden_size),
             nn.ReLU(),
-            nn.Linear(hidden_size, 1),
-            nn.Tanh()  # map to [-1, 1]
+            nn.Linear(hidden_size, 3),  # (x, y, z)
         )
 
-        # Latitude regression head
-        self.lat_head = nn.Sequential(
-            nn.Linear(num_features, hidden_size),
-            nn.LayerNorm(hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, 1),
-            nn.Tanh()  # map to [-1, 1]
-        )
 
     def forward(self, x):
         x = self.backbone(x)
@@ -51,10 +43,10 @@ class GeoGuessrModel(nn.Module):
             x = torch.flatten(x, 1)
 
         x = self.norm(x)
-        lon = self.lon_head(x) * 180  # scale to [-180, 180]
-        lat = self.lat_head(x) * 90  # scale to [-90, 90]
+        out = self.head(x)  # (B, 3)
 
-        out = torch.cat([lon, lat], dim=1)  # (B, 2)
+        out = F.normalize(out, p=2, dim=1, eps=1e-8)
+
         return out
 
 

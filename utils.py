@@ -1,3 +1,4 @@
+import math
 import yaml
 import torch
 
@@ -40,3 +41,32 @@ def get_optimizer(config: TrainConfig, net: torch.nn.Module) -> torch.optim.Opti
         raise Exception("Invalid optimizer")
 
     return optimizer
+
+def gcs_to_cartesian(lat, lon):
+    lat_rad = math.radians(lat)
+    lon_rad = math.radians(lon)
+
+    x = math.cos(lat_rad) * math.cos(lon_rad)
+    y = math.cos(lat_rad) * math.sin(lon_rad)
+    z = math.sin(lat_rad)
+
+    return x, y, z
+
+def gcs_to_cartesian_tensor(lat, lon):
+    lat_rad = torch.deg2rad(lat)
+    lon_rad = torch.deg2rad(lon)
+
+    x = torch.cos(lat_rad) * torch.cos(lon_rad)
+    y = torch.cos(lat_rad) * torch.sin(lon_rad)
+    z = torch.sin(lat_rad)
+
+    return x, y, z
+
+def cartesian_to_gcs_tensor(x, y, z):
+    lat_rad = torch.arcsin(z)
+    lon_rad = torch.atan2(y, x)
+
+    lat_deg = lat_rad / (180 / torch.pi)
+    lon_deg = lon_rad / (180 / torch.pi)
+
+    return lat_deg, lon_deg

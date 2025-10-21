@@ -5,10 +5,11 @@ import wandb
 import argparse
 
 from collections import defaultdict
+import torch.nn.functional as F
 
 from models import get_net
 from dataset import get_loaders_geoGuessr
-from utils import TrainConfig, load_config, get_optimizer
+from utils import TrainConfig, load_config, get_optimizer, gcs_to_cartesian_tensor, cartesian_to_gcs_tensor
 
 EARTH_RADIUS = 6371000  # meters
 
@@ -22,18 +23,23 @@ device = torch.device(
 
 # Haversine distance loss and geoguessr score
 def loss_fn(pred, target):
-    pred_lon, pred_lat = pred[:, 0], pred[:, 1]
-    true_lon, true_lat = target[:, 0], target[:, 1]
+    pred_x, pred_y, pred_z = pred[:, 0], pred[:, 1], pred[:, 2]
+    pred_lon_deg, pred_lat_deg = cartesian_to_gcs_tensor(pred_x, pred_y, pred_z)
 
-    pred_lon = torch.deg2rad(pred_lon)
-    pred_lat = torch.deg2rad(pred_lat)
-    true_lon = torch.deg2rad(true_lon)
-    true_lat = torch.deg2rad(true_lat)
+    true_lon_deg, true_lat_deg = target[:, 0], target[:, 1]
+    true_x, true_y, true_z = gcs_to_cartesian_tensor(true_lat_deg, true_lon_deg)
+    target = torch.stack([true_x, true_y, true_z], dim=1)
+    target = F.normalize(target, p=2, dim=1, eps=1e-8)
 
-    delta_phi = true_lat - pred_lat
-    delta_lambda = true_lon - pred_lon
+    loss = torch.nn.MSELoss()(pred, target)
 
-    a = torch.sin(delta_phi / 2) ** 2 + torch.cos(pred_lat) * torch.cos(true_lat) * torch.sin(delta_lambda / 2) ** 2
+    pred_lon_rad, pred_lat_rad = torch.deg2rad(pred_lon_deg), torch.deg2rad(pred_lat_deg)
+    true_lon_rad, true_lat_rad = torch.deg2rad(true_lon_deg), torch.deg2rad(true_lat_deg)
+
+    delta_phi = true_lat_rad - pred_lat_rad
+    delta_lambda = true_lon_rad - pred_lon_rad
+
+    a = torch.sin(delta_phi / 2) ** 2 + torch.cos(pred_lat_rad) * torch.cos(true_lat_rad) * torch.sin(delta_lambda / 2) ** 2
     c = 2 * torch.atan2(torch.sqrt(a), torch.sqrt(1 - a))
 
     with torch.no_grad():
@@ -42,26 +48,29 @@ def loss_fn(pred, target):
         score = 5000 * torch.exp(-distance / scaling_factor)
 
     return {
-        "loss_avg": c.mean(),
-        "loss_std": c.std(),
+        "loss": loss,
+        "distance_rad_avg": c.mean(),
+        "distance_rad_std": c.std(),
         "distance_avg": distance.mean(),
         "distance_std": distance.std(),
         "distance_median": distance.median(),
+        "distance_p10": torch.quantile(distance, 0.10),
+        "distance_p20": torch.quantile(distance, 0.20),
         "distance_p80": torch.quantile(distance, 0.80),
         "distance_p90": torch.quantile(distance, 0.90),
-        "distance_p95": torch.quantile(distance, 0.95),
         "score_avg": score.mean(),
         "score_std": score.std(),
         "score_median": score.median(),
+        "score_p10": torch.quantile(score, 0.10),
+        "score_p20": torch.quantile(score, 0.20),
         "score_p80": torch.quantile(score, 0.80),
         "score_p90": torch.quantile(score, 0.90),
-        "score_p95": torch.quantile(score, 0.95),
         "abs_err_lon_deg": torch.abs(target[:, 0] - pred[:, 0]).mean(),
         "abs_err_lat_deg": torch.abs(target[:, 1] - pred[:, 1]).mean(),
-        "pred_lon_std": pred_lon.std(),
-        "true_lon_std": true_lon.std(),
-        "pred_lat_std": pred_lat.std(),
-        "true_lat_std": true_lat.std(),
+        "pred_lon_std": pred_lon_deg.std(),
+        "true_lon_std": true_lon_deg.std(),
+        "pred_lat_std": pred_lat_deg.std(),
+        "true_lat_std": true_lat_deg.std(),
         "distances_raw": distance,
     }
 
@@ -117,18 +126,23 @@ def train(
         {
             "epoch": 0,
             "train/examples": global_step,
-            "eval/loss_avg": val_metrics.get("loss_avg", -1),
-            "eval/loss_std": val_metrics.get("loss_std", -1),
+            "eval/loss": val_metrics.get("loss", -1),
+            "eval/distance_rad_avg": val_metrics.get("distance_rad_avg", -1),
+            "eval/distance_rad_std": val_metrics.get("distance_rad_std", -1),
             "eval/distance_avg": val_metrics.get("distance_avg", -1),
             "eval/distance_std": val_metrics.get("distance_std", -1),
+            "eval/distance_median": val_metrics.get("distance_median", -1),
+            "eval/distance_p10": val_metrics.get("distance_p10", -1),
+            "eval/distance_p20": val_metrics.get("distance_p20", -1),
             "eval/distance_p80": val_metrics.get("distance_p80", -1),
             "eval/distance_p90": val_metrics.get("distance_p90", -1),
-            "eval/distance_p95": val_metrics.get("distance_p95", -1),
             "eval/score_avg": val_metrics.get("score_avg", -1),
             "eval/score_std": val_metrics.get("score_std", -1),
+            "eval/score_median": val_metrics.get("score_median", -1),
+            "eval/score_p10": val_metrics.get("score_p10", -1),
+            "eval/score_p20": val_metrics.get("score_p20", -1),
             "eval/score_p80": val_metrics.get("score_p80", -1),
             "eval/score_p90": val_metrics.get("score_p90", -1),
-            "eval/score_p95": val_metrics.get("score_p95", -1),
             "eval/abs_err_lon_deg": val_metrics.get("abs_err_lon_deg", -1),
             "eval/abs_err_lat_deg": val_metrics.get("abs_err_lat_deg", -1),
             "eval/pred_lon_std": val_metrics.get("pred_lon_std", -1),
@@ -140,12 +154,11 @@ def train(
     )
     print(
         f"[Eval] Epoch 0, Time: {taken:.2f}s\n"
-        f"  Loss:     {val_metrics.get('loss_avg', 0.0):.2f} ± {val_metrics.get('loss_std', 0.0):.2f}\n"
+        f"  Loss:     {val_metrics.get('loss', 0.0):.2f}\n"
         f"  Score:    {val_metrics.get('score_avg', 0.0):,.2f} ± {val_metrics.get('score_std', 0.0):,.2f}\n"
         f"  Distance: {val_metrics.get('distance_avg', 0.0):,.2f} ± {val_metrics.get('distance_std', 0.0):,.2f} km\n"
-        f"  Distance (p80/p90/p95): {val_metrics.get('distance_p80', 0.0):,.2f} / {val_metrics.get('distance_p90', 0.0):,.2f} / {val_metrics.get('distance_p95', 0.0):,.2f} km\n"
-        f"  Std (Pred Lon/Lat): {val_metrics.get('pred_lon_std', 0.0):.2f} / {val_metrics.get('pred_lat_std', 0.0):.2f}\n"
-        f"  Std (True Lon/Lat): {val_metrics.get('true_lon_std', 0.0):.2f} / {val_metrics.get('true_lat_std', 0.0):.2f}"
+        f"  Score (p20/p50/p80):    {val_metrics.get('score_p20', 0.0):,.2f} / {val_metrics.get('score_median', 0.0):,.2f} / {val_metrics.get('score_p80', 0.0):,.2f}\n"
+        f"  Distance (p20/p50/p80): {val_metrics.get('distance_p20', 0.0):,.2f} / {val_metrics.get('distance_median', 0.0):,.2f} / {val_metrics.get('distance_p80', 0.0):,.2f} km\n"
     )
 
     start = time.perf_counter()
@@ -159,10 +172,10 @@ def train(
             X, y = X.to(device), y.to(device)
             bs = X.shape[0]
 
-            out = net(X)  # Bx2
+            out = net(X)  # Bx3
             batch_metrics = loss_fn(out, y)
 
-            loss = batch_metrics["loss_avg"]
+            loss = batch_metrics["loss"]
             loss.backward()
 
             for key, value in batch_metrics.items():
@@ -195,18 +208,23 @@ def train(
                         "batch": i,
                         "train/iterations_per_second": ips,
                         "train/examples": global_step,
-                        "train/loss_avg": train_metrics.get("loss_avg", -1),
-                        "train/loss_std": train_metrics.get("loss_std", -1),
+                        "train/loss": train_metrics.get("loss", -1),
+                        "train/distance_rad_avg": train_metrics.get("distance_rad_avg", -1),
+                        "train/distance_rad_std": train_metrics.get("distance_rad_std", -1),
                         "train/distance_avg": train_metrics.get("distance_avg", -1),
                         "train/distance_std": train_metrics.get("distance_std", -1),
+                        "train/distance_median": train_metrics.get("distance_median", -1),
+                        "train/distance_p10": train_metrics.get("distance_p10", -1),
+                        "train/distance_p20": train_metrics.get("distance_p20", -1),
                         "train/distance_p80": train_metrics.get("distance_p80", -1),
                         "train/distance_p90": train_metrics.get("distance_p90", -1),
-                        "train/distance_p95": train_metrics.get("distance_p95", -1),
                         "train/score_avg": train_metrics.get("score_avg", -1),
                         "train/score_std": train_metrics.get("score_std", -1),
+                        "train/score_median": train_metrics.get("score_median", -1),
+                        "train/score_p10": train_metrics.get("score_p10", -1),
+                        "train/score_p20": train_metrics.get("score_p20", -1),
                         "train/score_p80": train_metrics.get("score_p80", -1),
                         "train/score_p90": train_metrics.get("score_p90", -1),
-                        "train/score_p95": train_metrics.get("score_p95", -1),
                         "train/abs_err_lon_deg": train_metrics.get("abs_err_lon_deg", -1),
                         "train/abs_err_lat_deg": train_metrics.get("abs_err_lat_deg", -1),
                         "train/pred_lon_std": train_metrics.get("pred_lon_std", -1),
@@ -219,12 +237,11 @@ def train(
                 )
                 print(
                     f"Epoch {e}, step {i} (Global {global_step}), Time: {taken:.2f}s ({ips:.2f} i/s)\n"
-                    f"  Loss:     {train_metrics.get('loss_avg', 0.0):.2f} ± {train_metrics.get('loss_std', 0.0):.2f}\n"
+                    f"  Loss:     {train_metrics.get('loss', 0.0):.2f}\n"
                     f"  Score:    {train_metrics.get('score_avg', 0.0):,.2f} ± {train_metrics.get('score_std', 0.0):,.2f}\n"
                     f"  Distance: {train_metrics.get('distance_avg', 0.0):,.2f} ± {train_metrics.get('distance_std', 0.0):,.2f} km\n"
-                    f"  Distance (p80/p90/p95): {train_metrics.get('distance_p80', 0.0):,.2f} / {train_metrics.get('distance_p90', 0.0):,.2f} / {train_metrics.get('distance_p95', 0.0):,.2f} km\n"
-                    f"  Std (Pred Lon/Lat): {train_metrics.get('pred_lon_std', 0.0):.2f} / {train_metrics.get('pred_lat_std', 0.0):.2f}\n"
-                    f"  Std (True Lon/Lat): {train_metrics.get('true_lon_std', 0.0):.2f} / {train_metrics.get('true_lat_std', 0.0):.2f}"
+                    f"  Score (p20/p50/p80):    {train_metrics.get('score_p20', 0.0):,.2f} / {train_metrics.get('score_median', 0.0):,.2f} / {train_metrics.get('score_p80', 0.0):,.2f}\n"
+                    f"  Distance (p20/p50/p80): {train_metrics.get('distance_p20', 0.0):,.2f} / {train_metrics.get('distance_median', 0.0):,.2f} / {train_metrics.get('distance_p80', 0.0):,.2f} km\n"
                 )
 
                 running_metrics_sums = defaultdict(float)
@@ -242,18 +259,23 @@ def train(
             {
                 "epoch": e+1,
                 "train/examples": global_step,
-                "eval/loss_avg": val_metrics.get("loss_avg", -1),
-                "eval/loss_std": val_metrics.get("loss_std", -1),
+                "eval/loss": val_metrics.get("loss", -1),
+                "eval/distance_rad_avg": val_metrics.get("distance_rad_avg", -1),
+                "eval/distance_rad_std": val_metrics.get("distance_rad_std", -1),
                 "eval/distance_avg": val_metrics.get("distance_avg", -1),
                 "eval/distance_std": val_metrics.get("distance_std", -1),
+                "eval/distance_median": val_metrics.get("distance_median", -1),
+                "eval/distance_p10": val_metrics.get("distance_p10", -1),
+                "eval/distance_p20": val_metrics.get("distance_p20", -1),
                 "eval/distance_p80": val_metrics.get("distance_p80", -1),
                 "eval/distance_p90": val_metrics.get("distance_p90", -1),
-                "eval/distance_p95": val_metrics.get("distance_p95", -1),
                 "eval/score_avg": val_metrics.get("score_avg", -1),
                 "eval/score_std": val_metrics.get("score_std", -1),
+                "eval/score_median": val_metrics.get("score_median", -1),
+                "eval/score_p10": val_metrics.get("score_p10", -1),
+                "eval/score_p20": val_metrics.get("score_p20", -1),
                 "eval/score_p80": val_metrics.get("score_p80", -1),
                 "eval/score_p90": val_metrics.get("score_p90", -1),
-                "eval/score_p95": val_metrics.get("score_p95", -1),
                 "eval/abs_err_lon_deg": val_metrics.get("abs_err_lon_deg", -1),
                 "eval/abs_err_lat_deg": val_metrics.get("abs_err_lat_deg", -1),
                 "eval/pred_lon_std": val_metrics.get("pred_lon_std", -1),
@@ -265,12 +287,11 @@ def train(
         )
         print(
             f"[Eval] Epoch {e+1}, Time: {taken:.2f}s\n"
-            f"  Loss:     {val_metrics.get('loss_avg', 0.0):.2f} ± {val_metrics.get('loss_std', 0.0):.2f}\n"
+            f"  Loss:     {val_metrics.get('loss', 0.0):.2f}\n"
             f"  Score:    {val_metrics.get('score_avg', 0.0):,.2f} ± {val_metrics.get('score_std', 0.0):,.2f}\n"
             f"  Distance: {val_metrics.get('distance_avg', 0.0):,.2f} ± {val_metrics.get('distance_std', 0.0):,.2f} km\n"
-            f"  Distance (p80/p90/p95): {val_metrics.get('distance_p80', 0.0):,.2f} / {val_metrics.get('distance_p90', 0.0):,.2f} / {val_metrics.get('distance_p95', 0.0):,.2f} km\n"
-            f"  Std (Pred Lon/Lat): {val_metrics.get('pred_lon_std', 0.0):.2f} / {val_metrics.get('pred_lat_std', 0.0):.2f}\n"
-            f"  Std (True Lon/Lat): {val_metrics.get('true_lon_std', 0.0):.2f} / {val_metrics.get('true_lat_std', 0.0):.2f}"
+            f"  Score (p20/p50/p80):    {val_metrics.get('score_p20', 0.0):,.2f} / {val_metrics.get('score_median', 0.0):,.2f} / {val_metrics.get('score_p80', 0.0):,.2f}\n"
+            f"  Distance (p20/p50/p80): {val_metrics.get('distance_p20', 0.0):,.2f} / {val_metrics.get('distance_median', 0.0):,.2f} / {val_metrics.get('distance_p80', 0.0):,.2f} km\n"
         )
         start = time.perf_counter()
 
@@ -319,7 +340,8 @@ if __name__ == "__main__":
     num_params = sum(p.numel() for p in net.parameters())
     print(f"Model parameters {num_params:,}")
     config_dict["num_params"] = num_params
-    wandb.init(project="GeoGuessrCoordinates", name=train_config.run_name, config=config_dict)
+    size = train_config.net_name.split("-")[-1]
+    wandb.init(project="GeoGuessrCoordinatesV2", name=train_config.run_name, config=config_dict, tags=[size])
     wandb.watch(net, log="all", log_freq=train_config.log_interval * 10) # Log grads & params
 
     train_loader, eval_loader, test_loader = get_loaders_geoGuessr(
@@ -337,18 +359,23 @@ if __name__ == "__main__":
     )
     wandb.log(
         {
-            "test/loss_avg": test_metrics.get("loss_avg", -1),
-            "test/loss_std": test_metrics.get("loss_std", -1),
+            "test/loss": test_metrics.get("loss", -1),
+            "test/distance_rad_avg": test_metrics.get("distance_rad_avg", -1),
+            "test/distance_rad_std": test_metrics.get("distance_rad_std", -1),
             "test/distance_avg": test_metrics.get("distance_avg", -1),
             "test/distance_std": test_metrics.get("distance_std", -1),
+            "test/distance_median": test_metrics.get("distance_median", -1),
+            "test/distance_p10": test_metrics.get("distance_p10", -1),
+            "test/distance_p20": test_metrics.get("distance_p20", -1),
             "test/distance_p80": test_metrics.get("distance_p80", -1),
             "test/distance_p90": test_metrics.get("distance_p90", -1),
-            "test/distance_p95": test_metrics.get("distance_p95", -1),
             "test/score_avg": test_metrics.get("score_avg", -1),
             "test/score_std": test_metrics.get("score_std", -1),
+            "test/score_median": test_metrics.get("score_median", -1),
+            "test/score_p10": test_metrics.get("score_p10", -1),
+            "test/score_p20": test_metrics.get("score_p20", -1),
             "test/score_p80": test_metrics.get("score_p80", -1),
             "test/score_p90": test_metrics.get("score_p90", -1),
-            "test/score_p95": test_metrics.get("score_p95", -1),
             "test/abs_err_lon_deg": test_metrics.get("abs_err_lon_deg", -1),
             "test/abs_err_lat_deg": test_metrics.get("abs_err_lat_deg", -1),
             "test/pred_lon_std": test_metrics.get("pred_lon_std", -1),
