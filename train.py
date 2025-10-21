@@ -28,10 +28,10 @@ def loss_fn(pred, target):
 
     true_lon_deg, true_lat_deg = target[:, 0], target[:, 1]
     true_x, true_y, true_z = gcs_to_cartesian_tensor(true_lat_deg, true_lon_deg)
-    target = torch.stack([true_x, true_y, true_z], dim=1)
-    target = F.normalize(target, p=2, dim=1, eps=1e-8)
+    target_cartesian = torch.stack([true_x, true_y, true_z], dim=1)
+    target_cartesian = F.normalize(target_cartesian, p=2, dim=1, eps=1e-8)
 
-    loss = torch.nn.MSELoss()(pred, target)
+    loss = torch.nn.MSELoss()(pred, target_cartesian)
 
     pred_lon_rad, pred_lat_rad = torch.deg2rad(pred_lon_deg), torch.deg2rad(pred_lat_deg)
     true_lon_rad, true_lat_rad = torch.deg2rad(true_lon_deg), torch.deg2rad(true_lat_deg)
@@ -125,7 +125,7 @@ def train(
     wandb.log(
         {
             "epoch": 0,
-            "train/examples": global_step,
+            "examples": global_step,
             "eval/loss": val_metrics.get("loss", -1),
             "eval/distance_rad_avg": val_metrics.get("distance_rad_avg", -1),
             "eval/distance_rad_std": val_metrics.get("distance_rad_std", -1),
@@ -175,7 +175,8 @@ def train(
             out = net(X)  # Bx3
             batch_metrics = loss_fn(out, y)
 
-            loss = batch_metrics["loss"]
+            # Optimize against distance.
+            loss = batch_metrics["distance_rad_avg"]
             loss.backward()
 
             for key, value in batch_metrics.items():
@@ -207,7 +208,7 @@ def train(
                         "epoch": e,
                         "batch": i,
                         "train/iterations_per_second": ips,
-                        "train/examples": global_step,
+                        "examples": global_step,
                         "train/loss": train_metrics.get("loss", -1),
                         "train/distance_rad_avg": train_metrics.get("distance_rad_avg", -1),
                         "train/distance_rad_std": train_metrics.get("distance_rad_std", -1),
@@ -258,7 +259,7 @@ def train(
         wandb.log(
             {
                 "epoch": e+1,
-                "train/examples": global_step,
+                "examples": global_step,
                 "eval/loss": val_metrics.get("loss", -1),
                 "eval/distance_rad_avg": val_metrics.get("distance_rad_avg", -1),
                 "eval/distance_rad_std": val_metrics.get("distance_rad_std", -1),
