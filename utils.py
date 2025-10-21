@@ -66,7 +66,7 @@ def cartesian_to_gcs_tensor(x, y, z):
     lat_rad = torch.arcsin(z)
     lon_rad = torch.atan2(y, x)
 
-    lat_deg = lat_rad / (180 / torch.pi)
-    lon_deg = lon_rad / (180 / torch.pi)
+    lat_deg = torch.rad2deg(lat_rad)
+    lon_deg = torch.rad2deg(lon_rad)
 
     return lat_deg, lon_deg
