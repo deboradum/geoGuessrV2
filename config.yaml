@@ -1,4 +1,8 @@
 net_name: "vit-s+16"
+num_experts: 8
+router_k: 2
+load_balance_loss_alpha: 0.01
+embedding_dim: 512
 freeze_weights: false
 dataset_dir: "dataset/"
 log_interval: 10
@@ -11,4 +15,4 @@ weight_decay: 0.01
 batch_size: 64
 gradient_clipping_norm: 2.0
 early_stop: 3
-run_name: "vit-s+16"
+run_name: "vit-s+16-router-k2-e8-alpha0.01"

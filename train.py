@@ -31,7 +31,7 @@ def loss_fn(pred, target):
     target_cartesian = torch.stack([true_x, true_y, true_z], dim=1)
     target_cartesian = F.normalize(target_cartesian, p=2, dim=1, eps=1e-8)
 
-    loss = torch.nn.MSELoss()(pred, target_cartesian)
+    mse_loss = torch.nn.MSELoss()(pred, target_cartesian)
 
     pred_lon_rad, pred_lat_rad = torch.deg2rad(pred_lon_deg), torch.deg2rad(pred_lat_deg)
     true_lon_rad, true_lat_rad = torch.deg2rad(true_lon_deg), torch.deg2rad(true_lat_deg)
@@ -48,7 +48,7 @@ def loss_fn(pred, target):
         score = 5000 * torch.exp(-distance / scaling_factor)
 
     return {
-        "loss": loss,
+        "mse_loss": mse_loss,
         "distance_rad_avg": c.mean(),
         "distance_rad_std": c.std(),
         "distance_avg": distance.mean(),
@@ -84,9 +84,12 @@ def evaluate(net, loader):
     with torch.no_grad():
         for X, y in loader:
             X, y = X.to(device), y.to(device)
-            out = net(X)  # BxCx2
+            out, load_metrics = net(X)
             batch_metrics = loss_fn(out, y)
             bs = X.size(0)
+
+            for key, value in load_metrics.items():
+                val_metrics_sums[key] += value.item() * bs
 
             all_distances.extend(batch_metrics["distances_raw"].cpu().tolist())
             for key, value_tensor in batch_metrics.items():
@@ -126,7 +129,11 @@ def train(
         {
             "epoch": 0,
             "examples": global_step,
-            "eval/loss": val_metrics.get("loss", -1),
+            "eval/mse_loss": val_metrics.get("mse_loss", -1),
+            "eval/load_balancing_loss": val_metrics.get("load_balancing_loss", -1),
+            "eval/expert_load_cv": val_metrics.get("expert_load_cv", -1),
+            "eval/dead_experts": val_metrics.get("dead_experts", -1),
+            "eval/router_prob_entropy": val_metrics.get("router_prob_entropy", -1),
             "eval/distance_rad_avg": val_metrics.get("distance_rad_avg", -1),
             "eval/distance_rad_std": val_metrics.get("distance_rad_std", -1),
             "eval/distance_avg": val_metrics.get("distance_avg", -1),
@@ -154,7 +161,7 @@ def train(
     )
     print(
         f"[Eval] Epoch 0, Time: {taken:.2f}s\n"
-        f"  Loss:     {val_metrics.get('loss', 0.0):.2f}\n"
+        f"  MSEloss:     {val_metrics.get('mse_loss', 0.0):.2f}\n"
         f"  Score:    {val_metrics.get('score_avg', 0.0):,.2f} ± {val_metrics.get('score_std', 0.0):,.2f}\n"
         f"  Distance: {val_metrics.get('distance_avg', 0.0):,.2f} ± {val_metrics.get('distance_std', 0.0):,.2f} km\n"
         f"  Score (p20/p50/p80):    {val_metrics.get('score_p20', 0.0):,.2f} / {val_metrics.get('score_median', 0.0):,.2f} / {val_metrics.get('score_p80', 0.0):,.2f}\n"
@@ -172,12 +179,16 @@ def train(
             X, y = X.to(device), y.to(device)
             bs = X.shape[0]
 
-            out = net(X)  # Bx3
-            batch_metrics = loss_fn(out, y)
+            out, load_metrics = net(X)  # Bx3
+            for key, value in load_metrics.items():
+                running_metrics_sums[key] += value.item()
 
+            batch_metrics = loss_fn(out, y)
             # Optimize against distance.
-            loss = batch_metrics["distance_rad_avg"]
-            loss.backward()
+            total_loss = batch_metrics["distance_rad_avg"] + config.load_balance_loss_alpha * load_metrics["load_balancing_loss"]
+            total_loss.backward()
+
+            running_metrics_sums["total_loss"] += total_loss.item()
 
             for key, value in batch_metrics.items():
                 if key != "distances_raw":
@@ -209,7 +220,12 @@ def train(
                         "batch": i,
                         "train/iterations_per_second": ips,
                         "examples": global_step,
-                        "train/loss": train_metrics.get("loss", -1),
+                        "train/total_loss": train_metrics.get("total_loss", -1),
+                        "train/mse_loss": train_metrics.get("mse_loss", -1),
+                        "train/load_balancing_loss": train_metrics.get("load_balancing_loss", -1),
+                        "train/expert_load_cv": train_metrics.get("expert_load_cv", -1),
+                        "train/dead_experts": train_metrics.get("dead_experts", -1),
+                        "train/router_prob_entropy": train_metrics.get("router_prob_entropy", -1),
                         "train/distance_rad_avg": train_metrics.get("distance_rad_avg", -1),
                         "train/distance_rad_std": train_metrics.get("distance_rad_std", -1),
                         "train/distance_avg": train_metrics.get("distance_avg", -1),
@@ -238,7 +254,7 @@ def train(
                 )
                 print(
                     f"Epoch {e}, step {i} (Global {global_step}), Time: {taken:.2f}s ({ips:.2f} i/s)\n"
-                    f"  Loss:     {train_metrics.get('loss', 0.0):.2f}\n"
+                    f"  MSEloss:     {train_metrics.get('mse_loss', 0.0):.2f}\n"
                     f"  Score:    {train_metrics.get('score_avg', 0.0):,.2f} ± {train_metrics.get('score_std', 0.0):,.2f}\n"
                     f"  Distance: {train_metrics.get('distance_avg', 0.0):,.2f} ± {train_metrics.get('distance_std', 0.0):,.2f} km\n"
                     f"  Score (p20/p50/p80):    {train_metrics.get('score_p20', 0.0):,.2f} / {train_metrics.get('score_median', 0.0):,.2f} / {train_metrics.get('score_p80', 0.0):,.2f}\n"
@@ -260,7 +276,11 @@ def train(
             {
                 "epoch": e+1,
                 "examples": global_step,
-                "eval/loss": val_metrics.get("loss", -1),
+                "eval/mse_loss": val_metrics.get("mse_loss", -1),
+                "eval/load_balancing_loss": val_metrics.get("load_balancing_loss", -1),
+                "eval/expert_load_cv": val_metrics.get("expert_load_cv", -1),
+                "eval/dead_experts": val_metrics.get("dead_experts", -1),
+                "eval/router_prob_entropy": val_metrics.get("router_prob_entropy", -1),
                 "eval/distance_rad_avg": val_metrics.get("distance_rad_avg", -1),
                 "eval/distance_rad_std": val_metrics.get("distance_rad_std", -1),
                 "eval/distance_avg": val_metrics.get("distance_avg", -1),
@@ -288,7 +308,7 @@ def train(
         )
         print(
             f"[Eval] Epoch {e+1}, Time: {taken:.2f}s\n"
-            f"  Loss:     {val_metrics.get('loss', 0.0):.2f}\n"
+            f"  MSEloss:     {val_metrics.get('mse_loss', 0.0):.2f}\n"
             f"  Score:    {val_metrics.get('score_avg', 0.0):,.2f} ± {val_metrics.get('score_std', 0.0):,.2f}\n"
             f"  Distance: {val_metrics.get('distance_avg', 0.0):,.2f} ± {val_metrics.get('distance_std', 0.0):,.2f} km\n"
             f"  Score (p20/p50/p80):    {val_metrics.get('score_p20', 0.0):,.2f} / {val_metrics.get('score_median', 0.0):,.2f} / {val_metrics.get('score_p80', 0.0):,.2f}\n"
@@ -331,7 +351,7 @@ if __name__ == "__main__":
     torch.backends.cudnn.benchmark = False
 
     print("Setting up model")
-    net = get_net(freeze_weights=train_config.freeze_weights, net_name=train_config.net_name, device=device)
+    net = get_net(config=train_config, device=device)
     optimizer = get_optimizer(train_config, net)
 
     if args.compile:
@@ -360,7 +380,11 @@ if __name__ == "__main__":
     )
     wandb.log(
         {
-            "test/loss": test_metrics.get("loss", -1),
+            "test/mse_loss": test_metrics.get("mse_loss", -1),
+            "test/load_balancing_loss": test_metrics.get("load_balancing_loss", -1),
+            "test/expert_load_cv": test_metrics.get("expert_load_cv", -1),
+            "test/dead_experts": test_metrics.get("dead_experts", -1),
+            "test/router_prob_entropy": test_metrics.get("router_prob_entropy", -1),
             "test/distance_rad_avg": test_metrics.get("distance_rad_avg", -1),
             "test/distance_rad_std": test_metrics.get("distance_rad_std", -1),
             "test/distance_avg": test_metrics.get("distance_avg", -1),

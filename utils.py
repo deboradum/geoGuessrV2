@@ -8,6 +8,10 @@ from typing import Tuple
 @dataclass
 class TrainConfig:
     net_name: str = "convnext-tiny"
+    num_experts: int = 8
+    router_k: int = 2
+    load_balance_loss_alpha: float = 0.01
+    embedding_dim: int = 512
     freeze_weights: bool = False
     dataset_dir: str = "dataset/"
     log_interval: int = 100

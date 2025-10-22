@@ -28,11 +28,8 @@ if __name__ == "__main__":
         "method": "bayes",
         "metric": {"name": "test_distance", "goal": "minimize"},
         "parameters": {
-            # "optimizer": {"values": ["adam", "adamW", "sgd"]},
-            "optimizer": {"values": ["adamW"]},
-            "beta_2": {"values": [0.95, 0.97, 0.99, 0.999]},
-            "learning_rate": {"min": 5e-5, "max": 5e-4},
-            "weight_decay": {"values": [0.0, 0.01, 0.05]},
+            "learning_rate": {"min": 4e-5, "max": 1.6e-4},
+            "gradient_clipping_norm": {"values": [0.0, 2.0, 3.0]},
         },
     }
 
@@ -41,15 +38,13 @@ if __name__ == "__main__":
         config = wandb.config
 
         # update configs with sweep params
-        train_config.optimizer = config.optimizer
-        train_config.beta_2 = config.beta_2
         train_config.learning_rate = config.learning_rate
-        train_config.weight_decay = config.weight_decay
+        train_config.gradient_clipping_norm = config.gradient_clipping_norm
 
         config_dict = {**vars(train_config)}
 
         print("Setting up model")
-        net = get_net(freeze_weights=train_config.freeze_weights, net_name=train_config.net_name, device=device)
+        net = get_net(config=train_config, device=device)
         optimizer = get_optimizer(train_config, net)
 
         if args.compile:

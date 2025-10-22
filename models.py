@@ -4,12 +4,51 @@ import torchvision
 import torch.nn as nn
 import torch.nn.functional as F
 
-from transformers import AutoModel
 from typing import Any
+from utils import TrainConfig
+from transformers import AutoModel
+
+class TopKRouter(nn.Module):
+    def __init__(self, embedding_dim: int, num_experts: int, k: int):
+        super().__init__()
+        self.k = k
+        self.gate = nn.Linear(embedding_dim, num_experts, bias=False)
+
+    def forward(self, x):
+        # Noise injection
+        if self.training: # (B, num_features)
+            noise = torch.randn_like(self.gate(x)) * 1e-2
+            expert_scores = self.gate(x) + noise
+        else:
+            expert_scores = self.gate(x)
+
+        top_k_logits, top_k_indices = torch.topk(expert_scores, self.k, dim=-1)
+        top_k_probs = F.softmax(top_k_logits, dim=-1)
+
+        all_expert_probs = F.softmax(expert_scores, dim=-1)
+
+        return top_k_probs, top_k_indices, all_expert_probs
+
+
+class CartesianExpert(nn.Module):
+    def __init__(self, input_dim: int, hidden_dim: int):
+        super().__init__()
+
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, 3),  # (x, y, z)
+        )
+
+    def forward(self, x):
+        return self.net(x)  # (B, input_dim) > (B, 3)
+
 
 class GeoGuessrModel(nn.Module):
-    def __init__(self, backbone: nn.Module, num_features: int, freeze_weights: bool, is_vit: bool = False):
+    def __init__(self, backbone: nn.Module, num_features: int, freeze_weights: bool, embedding_dim: int, num_experts: int, k: int, is_vit: bool = False, device="cpu"):
         super().__init__()
+        self.device = device
         self.is_vit = is_vit
 
         self.backbone = backbone
@@ -25,15 +64,13 @@ class GeoGuessrModel(nn.Module):
         widening_factor = 2
         hidden_size = num_features * widening_factor
 
-        self.head = nn.Sequential(
-            nn.Linear(num_features, hidden_size),
-            nn.LayerNorm(hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, 3),  # (x, y, z)
-        )
-
+        self.num_experts = num_experts
+        self.router = TopKRouter(embedding_dim=num_features, num_experts=num_experts, k=k)
+        self.experts = nn.ModuleList([CartesianExpert(num_features, hidden_size) for _ in range(num_experts)])
 
     def forward(self, x):
+        bs = x.shape[0]
+
         x = self.backbone(x)
 
         if self.is_vit:
@@ -41,16 +78,48 @@ class GeoGuessrModel(nn.Module):
         else:
             x = self.pool(x)
             x = torch.flatten(x, 1)
-
         x = self.norm(x)
-        out = self.head(x)  # (B, 3)
+
+        experts_weights, experts_indices, all_expert_probs = self.router(x)  # (B, k), (B, k)
+        P = all_expert_probs.mean(dim=0)
+
+        load_balancing_loss = torch.tensor(0, dtype=torch.float32, device=self.device)
+        out = torch.zeros(bs, 3, dtype=x.dtype, device=self.device)  # (B, 3)
+
+        expert_load = torch.zeros(self.num_experts, dtype=torch.float32, device=self.device)
+        total_assignments = bs * self.router.k
+        for i, expert in enumerate(self.experts):
+            (batch_idx, top_k_idx) = torch.where(experts_indices == i)
+            num_tokens_routed_to_i = batch_idx.numel()
+            if num_tokens_routed_to_i == 0:
+                continue
+
+            weights = experts_weights[batch_idx, top_k_idx]  # (len(batch_idx),)
+            expert_out = expert(x[batch_idx])  # (len(batch_idx), 3)
+            weighted_out = expert_out * weights.unsqueeze(-1)  # (len(batch_idx), 3)
+            out.index_add_(0, batch_idx, weighted_out)
+
+            f_i = num_tokens_routed_to_i / total_assignments  # (1,)
+            load_balancing_loss += f_i * P[i]
+            expert_load[i] = f_i
 
         out = F.normalize(out, p=2, dim=1, eps=1e-8)
 
-        return out
+        cv_load = torch.std(expert_load) / (expert_load.mean() + 1e-6)
+        dead_experts = torch.sum(expert_load == 0)
+        router_prob_entropy = -torch.sum(P * torch.log(P + 1e-9))
+
+        load_metrics = {
+            "load_balancing_loss": load_balancing_loss * self.num_experts,
+            "expert_load_cv": cv_load,
+            "dead_experts": dead_experts,
+            "router_prob_entropy": router_prob_entropy,
+        }
+
+        return out, load_metrics,
 
 
-def get_convnext(size: str, freeze_weights: bool) -> nn.Module:
+def get_convnext(size: str, config: TrainConfig, device) -> nn.Module:
     if size == "tiny":  # 29M params
         weights = torchvision.models.ConvNeXt_Tiny_Weights.DEFAULT
         model = torchvision.models.convnext_tiny
@@ -70,10 +139,10 @@ def get_convnext(size: str, freeze_weights: bool) -> nn.Module:
     backbone = model(weights=weights)
     num_features = backbone.classifier[2].in_features
 
-    return GeoGuessrModel(backbone.features, num_features, freeze_weights, is_vit=False)
+    return GeoGuessrModel(backbone.features, num_features, config.freeze_weights, config.embedding_dim, config.num_experts, config.router_k, is_vit=False, device=device)
 
 
-def get_vit(size: str, freeze_weights: bool) -> nn.Module:
+def get_vit(size: str, config: TrainConfig, device) -> nn.Module:
     if size == "s16":  # 21M params
         backbone = AutoModel.from_pretrained("facebook/dinov3-convnext-tiny-pretrain-lvd1689m")
     elif size == "s+16":  # 29M parmas
@@ -92,14 +161,15 @@ def get_vit(size: str, freeze_weights: bool) -> nn.Module:
 
     num_features = backbone.config.hidden_size
 
-    return GeoGuessrModel(backbone, num_features, freeze_weights, is_vit=True)
+    return GeoGuessrModel(backbone, num_features, config.freeze_weights, config.embedding_dim, config.num_experts, config.router_k, is_vit=True, device=device)
 
 
-def get_net(freeze_weights: bool, net_name:str="convnext-tiny", device="cpu") -> torch.nn.Module | Any:
+def get_net(config: TrainConfig, device="cpu") -> torch.nn.Module | Any:
+    net_name = config.net_name
     if "convnext" in net_name:
-        return get_convnext(net_name.split("-")[-1], freeze_weights).to(device)
+        return get_convnext(net_name.split("-")[-1], config, device).to(device)
     if "vit" in net_name:
-        return get_vit(net_name.split("-")[-1], freeze_weights).to(device)
+        return get_vit(net_name.split("-")[-1], config, device).to(device)
     else:
         print(f"{net_name} not supported")
         exit(0)
