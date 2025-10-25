@@ -25,6 +25,7 @@ class TrainConfig:
     gradient_clipping_norm: float = 1.0
     early_stop: int = 3
     run_name: str = "You forgot to change the run name"
+    s2_cell_level: int = 10
 
 
 def load_config(yaml_path: str) -> TrainConfig:

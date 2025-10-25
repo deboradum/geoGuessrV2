@@ -61,14 +61,19 @@ class GeoGuessrModel(nn.Module):
 
         self.norm = nn.LayerNorm(num_features)
 
-        widening_factor = 2
-        hidden_size = num_features * widening_factor
+        hidden_size = 512
+
+        self.geo_head = nn.Sequential(
+            nn.Linear(num_features, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, embedding_dim),
+        )
 
         self.num_experts = num_experts
-        self.router = TopKRouter(embedding_dim=num_features, num_experts=num_experts, k=k)
-        self.experts = nn.ModuleList([CartesianExpert(num_features, hidden_size) for _ in range(num_experts)])
+        self.router = TopKRouter(embedding_dim=embedding_dim, num_experts=num_experts, k=k)
+        self.experts = nn.ModuleList([CartesianExpert(embedding_dim, hidden_size) for _ in range(num_experts)])
 
-    def forward(self, x):
+    def forward(self, x, embedding_only: bool = False):
         bs = x.shape[0]
 
         x = self.backbone(x)
@@ -79,6 +84,11 @@ class GeoGuessrModel(nn.Module):
             x = self.pool(x)
             x = torch.flatten(x, 1)
         x = self.norm(x)
+
+        # Produce location-based embedding
+        x = self.geo_head(x)
+        if embedding_only:
+            return x
 
         experts_weights, experts_indices, all_expert_probs = self.router(x)  # (B, k), (B, k)
         P = all_expert_probs.mean(dim=0)
