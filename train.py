@@ -248,8 +248,8 @@ def train(
                         "train/true_lon_std": train_metrics.get("true_lon_std", -1),
                         "train/pred_lat_std": train_metrics.get("pred_lat_std", -1),
                         "train/true_lat_std": train_metrics.get("true_lat_std", -1),
-                        "train/grad_norm_before_clip": total_grad_norm_before / config.log_interval,
-                        "train/grad_norm_after_clip": total_grad_norm_after / config.log_interval,
+                        "optimizer/grad_norm_before_clip": total_grad_norm_before / config.log_interval,
+                        "optimizer/grad_norm_after_clip": total_grad_norm_after / config.log_interval,
                     }
                 )
                 print(
