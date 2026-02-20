@@ -26,6 +26,7 @@ class TrainConfig:
     early_stop: int = 3
     run_name: str = "You forgot to change the run name"
     s2_cell_level: int = 10
+    pretrained_path: str = ""
 
 
 def load_config(yaml_path: str) -> TrainConfig:

@@ -1,3 +1,4 @@
+import os
 import torch
 import torchvision
 
@@ -149,7 +150,12 @@ def get_convnext(size: str, config: TrainConfig, device) -> nn.Module:
     backbone = model(weights=weights)
     num_features = backbone.classifier[2].in_features
 
-    return GeoGuessrModel(backbone.features, num_features, config.freeze_weights, config.embedding_dim, config.num_experts, config.router_k, is_vit=False, device=device)
+    net = GeoGuessrModel(backbone.features, num_features, config.freeze_weights, config.embedding_dim, config.num_experts, config.router_k, is_vit=False, device=device)
+    if os.path.isfile(config.pretrained_path):
+        print("Resuming training from checkpoint:", config.pretrained_path)
+        net.load_state_dict(torch.load(config.pretrained_path, weights_only=True))
+
+    return net
 
 
 def get_vit(size: str, config: TrainConfig, device) -> nn.Module:
@@ -171,7 +177,12 @@ def get_vit(size: str, config: TrainConfig, device) -> nn.Module:
 
     num_features = backbone.config.hidden_size
 
-    return GeoGuessrModel(backbone, num_features, config.freeze_weights, config.embedding_dim, config.num_experts, config.router_k, is_vit=True, device=device)
+    net = GeoGuessrModel(backbone, num_features, config.freeze_weights, config.embedding_dim, config.num_experts, config.router_k, is_vit=True, device=device)
+    if os.path.isfile(config.pretrained_path):
+        print("Resuming training from checkpoint:", config.pretrained_path)
+        net.load_state_dict(torch.load(config.pretrained_path, weights_only=True))
+
+    return net
 
 
 def get_net(config: TrainConfig, device="cpu") -> torch.nn.Module | Any:
