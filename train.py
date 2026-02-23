@@ -4,14 +4,18 @@ import torch
 import wandb
 import argparse
 
-from collections import defaultdict
+import torch.nn as nn
+from typing import DefaultDict
 import torch.nn.functional as F
+from collections import defaultdict
 
 from models import get_net
-from dataset import get_loaders_geoGuessr
+from dataset import get_loaders_geoGuessrEmbedding
 from utils import TrainConfig, load_config, get_optimizer, gcs_to_cartesian_tensor, cartesian_to_gcs_tensor
 
 EARTH_RADIUS = 6371000  # meters
+
+s2_criterion = torch.nn.CrossEntropyLoss()
 
 device = torch.device(
     "mps"
@@ -75,18 +79,36 @@ def loss_fn(pred, target):
     }
 
 
-def evaluate(net, loader):
+def evaluate(net, loader, s2_loss_weight, load_balance_loss_weight):
     val_metrics_sums = defaultdict(float)
     total_samples = 0
     all_distances = []
 
     net.eval()
     with torch.no_grad():
-        for X, y in loader:
-            X, y = X.to(device), y.to(device)
-            out, load_metrics = net(X)
-            batch_metrics = loss_fn(out, y)
+        for X, (y_coords, y_s2) in loader:
+            X, y_coords, y_s2 = X.to(device), y_coords.to(device), y_s2.to(device)
             bs = X.size(0)
+
+            out, s2_logits, load_metrics = net(X)
+            batch_metrics = loss_fn(out, y_coords)
+            dist_loss = batch_metrics["distance_rad_avg"]
+
+            s2_loss = s2_criterion(s2_logits, y_s2)
+            batch_metrics["s2_loss"] = s2_loss
+
+            pred_labels = torch.argmax(s2_logits, dim=1)
+            correct = (pred_labels == y_s2).sum()
+            batch_metrics["s2_accuracy"] = correct.float() / bs
+
+            aux_loss = load_metrics["load_balancing_loss"]
+
+            alpha = s2_loss_weight
+            beta = load_balance_loss_weight
+
+            total_loss = dist_loss + (alpha * s2_loss) + (beta * aux_loss)
+
+            batch_metrics["total_loss"] = total_loss
 
             for key, value in load_metrics.items():
                 val_metrics_sums[key] += value.item() * bs
@@ -108,21 +130,21 @@ def evaluate(net, loader):
 
 def train(
     config: TrainConfig,
-    net,
+    net: nn.Module,
     optimizer: torch.optim.Optimizer,
     train_loader: torch.utils.data.DataLoader,
     eval_loader: torch.utils.data.DataLoader,
     test_loader: torch.utils.data.DataLoader
 ):
     best_distance = float('inf')
-    best_net = None
+    best_state_dict = copy.deepcopy(net.state_dict())
     early_stop_counter = 0
     global_step = 0
 
     # Evaluate
     start = time.perf_counter()
     net.eval()
-    val_metrics, all_eval_distances = evaluate(net, eval_loader)
+    val_metrics, all_eval_distances = evaluate(net, eval_loader, config.s2_loss_weight, config.load_balance_loss_weight)
     net.train()
     taken = time.perf_counter() - start
     wandb.log(
@@ -130,6 +152,9 @@ def train(
             "epoch": 0,
             "examples": global_step,
             "eval/mse_loss": val_metrics.get("mse_loss", -1),
+            "eval/total_loss": val_metrics.get("total_loss", -1),
+            "eval/s2_loss": val_metrics.get("s2_loss", -1),
+            "eval/s2_accuracy": val_metrics.get("s2_accuracy", -1),
             "eval/load_balancing_loss": val_metrics.get("load_balancing_loss", -1),
             "eval/expert_load_cv": val_metrics.get("expert_load_cv", -1),
             "eval/dead_experts": val_metrics.get("dead_experts", -1),
@@ -162,30 +187,47 @@ def train(
     print(
         f"[Eval] Epoch 0, Time: {taken:.2f}s\n"
         f"  MSEloss:     {val_metrics.get('mse_loss', 0.0):.2f}\n"
-        f"  Score:    {val_metrics.get('score_avg', 0.0):,.2f} ± {val_metrics.get('score_std', 0.0):,.2f}\n"
-        f"  Distance: {val_metrics.get('distance_avg', 0.0):,.2f} ± {val_metrics.get('distance_std', 0.0):,.2f} km\n"
+        f"  S2 loss:     {val_metrics.get('s2_loss', 0.0):.2f}\n"
+        f"  S2 acc:      {val_metrics.get('s2_accuracy', 0.0):.2f}\n"
+        f"  total loss:  {val_metrics.get('total_loss', 0.0):.2f}\n"
+        f"  Score:       {val_metrics.get('score_avg', 0.0):,.2f} ± {val_metrics.get('score_std', 0.0):,.2f}\n"
+        f"  Distance:    {val_metrics.get('distance_avg', 0.0):,.2f} ± {val_metrics.get('distance_std', 0.0):,.2f} km\n"
         f"  Score (p20/p50/p80):    {val_metrics.get('score_p20', 0.0):,.2f} / {val_metrics.get('score_median', 0.0):,.2f} / {val_metrics.get('score_p80', 0.0):,.2f}\n"
         f"  Distance (p20/p50/p80): {val_metrics.get('distance_p20', 0.0):,.2f} / {val_metrics.get('distance_median', 0.0):,.2f} / {val_metrics.get('distance_p80', 0.0):,.2f} km\n"
     )
 
     start = time.perf_counter()
     for e in range(config.epochs):
-        running_metrics_sums = defaultdict(float)
+        running_metrics_sums: DefaultDict[str, float] = defaultdict(float)
         total_grad_norm_before = 0.
         total_grad_norm_after = 0.
 
         net.train()
-        for i, (X, y) in enumerate(train_loader):
-            X, y = X.to(device), y.to(device)
+        for i, (X, (y_coords, y_s2)) in enumerate(train_loader):
+            X, y_coords, y_s2 = X.to(device), y_coords.to(device), y_s2.to(device)
             bs = X.shape[0]
 
-            out, load_metrics = net(X)  # Bx3
+            out, s2_logits, load_metrics = net(X)  # Bx3
             for key, value in load_metrics.items():
                 running_metrics_sums[key] += value.item()
 
-            batch_metrics = loss_fn(out, y)
-            # Optimize against distance.
-            total_loss = batch_metrics["distance_rad_avg"] + config.load_balance_loss_alpha * load_metrics["load_balancing_loss"]
+            batch_metrics = loss_fn(out, y_coords)
+            dist_loss = batch_metrics["distance_rad_avg"]
+
+            s2_loss = s2_criterion(s2_logits, y_s2)
+            batch_metrics["s2_loss"] = s2_loss
+
+            pred_labels = torch.argmax(s2_logits, dim=1)
+            correct = (pred_labels == y_s2).sum()
+            batch_metrics["s2_accuracy"] = correct.float() / bs
+
+            aux_loss = load_metrics["load_balancing_loss"]
+
+            alpha = config.s2_loss_weight
+            beta = config.load_balance_loss_weight
+
+            # Optimize against distance, s2 cross entropy and load balancing loss.
+            total_loss = dist_loss + (alpha * s2_loss) + (beta * aux_loss)
             total_loss.backward()
 
             running_metrics_sums["total_loss"] += total_loss.item()
@@ -198,7 +240,7 @@ def train(
                 grad_norm_before = torch.nn.utils.clip_grad_norm_(
                     net.parameters(), config.gradient_clipping_norm
                 )
-                grad_norm_after = torch.sqrt(sum(p.grad.norm()**2 for p in net.parameters() if p.grad is not None))
+                grad_norm_after = torch.sqrt(sum(p.grad.norm()**2 for p in net.parameters() if p.grad is not None)) # type: ignore
                 total_grad_norm_before += grad_norm_before.item()
                 total_grad_norm_after += grad_norm_after.item()
 
@@ -223,6 +265,8 @@ def train(
                         "train/total_loss": train_metrics.get("total_loss", -1),
                         "train/mse_loss": train_metrics.get("mse_loss", -1),
                         "train/load_balancing_loss": train_metrics.get("load_balancing_loss", -1),
+                        "train/s2_loss": train_metrics.get("s2_loss", -1),
+                        "train/s2_accuracy": train_metrics.get("s2_accuracy", -1),
                         "train/expert_load_cv": train_metrics.get("expert_load_cv", -1),
                         "train/dead_experts": train_metrics.get("dead_experts", -1),
                         "train/router_prob_entropy": train_metrics.get("router_prob_entropy", -1),
@@ -255,8 +299,11 @@ def train(
                 print(
                     f"Epoch {e}, step {i} (Global {global_step}), Time: {taken:.2f}s ({ips:.2f} i/s)\n"
                     f"  MSEloss:     {train_metrics.get('mse_loss', 0.0):.2f}\n"
-                    f"  Score:    {train_metrics.get('score_avg', 0.0):,.2f} ± {train_metrics.get('score_std', 0.0):,.2f}\n"
-                    f"  Distance: {train_metrics.get('distance_avg', 0.0):,.2f} ± {train_metrics.get('distance_std', 0.0):,.2f} km\n"
+                    f"  S2 loss:     {train_metrics.get('s2_loss', 0.0):.2f}\n"
+                    f"  S2 acc:      {train_metrics.get('s2_accuracy', 0.0):.2f}\n"
+                    f"  total loss:  {train_metrics.get('total_loss', 0.0):.2f}\n"
+                    f"  Score:       {train_metrics.get('score_avg', 0.0):,.2f} ± {train_metrics.get('score_std', 0.0):,.2f}\n"
+                    f"  Distance:    {train_metrics.get('distance_avg', 0.0):,.2f} ± {train_metrics.get('distance_std', 0.0):,.2f} km\n"
                     f"  Score (p20/p50/p80):    {train_metrics.get('score_p20', 0.0):,.2f} / {train_metrics.get('score_median', 0.0):,.2f} / {train_metrics.get('score_p80', 0.0):,.2f}\n"
                     f"  Distance (p20/p50/p80): {train_metrics.get('distance_p20', 0.0):,.2f} / {train_metrics.get('distance_median', 0.0):,.2f} / {train_metrics.get('distance_p80', 0.0):,.2f} km\n"
                 )
@@ -269,7 +316,7 @@ def train(
         # Evaluate
         start = time.perf_counter()
         net.eval()
-        val_metrics, all_eval_distances = evaluate(net, eval_loader)
+        val_metrics, all_eval_distances = evaluate(net, eval_loader, config.s2_loss_weight, config.load_balance_loss_weight)
         net.train()
         taken = time.perf_counter() - start
         wandb.log(
@@ -277,6 +324,9 @@ def train(
                 "epoch": e+1,
                 "examples": global_step,
                 "eval/mse_loss": val_metrics.get("mse_loss", -1),
+                "eval/s2_loss": val_metrics.get("s2_loss", -1),
+                "eval/total_loss": val_metrics.get("total_loss", -1),
+                "eval/s2_accuracy": val_metrics.get("s2_accuracy", -1),
                 "eval/load_balancing_loss": val_metrics.get("load_balancing_loss", -1),
                 "eval/expert_load_cv": val_metrics.get("expert_load_cv", -1),
                 "eval/dead_experts": val_metrics.get("dead_experts", -1),
@@ -309,8 +359,11 @@ def train(
         print(
             f"[Eval] Epoch {e+1}, Time: {taken:.2f}s\n"
             f"  MSEloss:     {val_metrics.get('mse_loss', 0.0):.2f}\n"
-            f"  Score:    {val_metrics.get('score_avg', 0.0):,.2f} ± {val_metrics.get('score_std', 0.0):,.2f}\n"
-            f"  Distance: {val_metrics.get('distance_avg', 0.0):,.2f} ± {val_metrics.get('distance_std', 0.0):,.2f} km\n"
+            f"  S2 loss:     {val_metrics.get('s2_loss', 0.0):.2f}\n"
+            f"  S2 acc:      {val_metrics.get('s2_accuracy', 0.0):.2f}\n"
+            f"  total loss:  {val_metrics.get('total_loss', 0.0):.2f}\n"
+            f"  Score:       {val_metrics.get('score_avg', 0.0):,.2f} ± {val_metrics.get('score_std', 0.0):,.2f}\n"
+            f"  Distance:    {val_metrics.get('distance_avg', 0.0):,.2f} ± {val_metrics.get('distance_std', 0.0):,.2f} km\n"
             f"  Score (p20/p50/p80):    {val_metrics.get('score_p20', 0.0):,.2f} / {val_metrics.get('score_median', 0.0):,.2f} / {val_metrics.get('score_p80', 0.0):,.2f}\n"
             f"  Distance (p20/p50/p80): {val_metrics.get('distance_p20', 0.0):,.2f} / {val_metrics.get('distance_median', 0.0):,.2f} / {val_metrics.get('distance_p80', 0.0):,.2f} km\n"
         )
@@ -319,15 +372,18 @@ def train(
         # Check for early stop
         if val_metrics["distance_avg"] < best_distance:
             best_distance = val_metrics["distance_avg"]
-            best_net = copy.deepcopy(net)
+            best_state_dict = copy.deepcopy(net.state_dict())
         else:
             early_stop_counter += 1
             if early_stop_counter > config.early_stop:
-                net = best_net
+                net.load_state_dict(best_state_dict)
                 break
 
+    # Load best model before test evaluation
+    net.load_state_dict(best_state_dict)
+
     net.eval()
-    return evaluate(net, test_loader)
+    return evaluate(net, test_loader, config.s2_loss_weight, config.load_balance_loss_weight)
 
 
 def get_args():
@@ -350,29 +406,29 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+    train_loader, eval_loader, test_loader = get_loaders_geoGuessrEmbedding(
+        directory=train_config.dataset_dir, s2_cell_level=train_config.s2_cell_level
+    )
+
     print("Setting up model")
-    net = get_net(config=train_config, device=device)
+    net = get_net(train_loader.dataset.num_unique_s2_classes, config=train_config, device=device) # type: ignore
     optimizer = get_optimizer(train_config, net)
 
     if args.compile:
         print("Compiling network")
         net = torch.compile(net)
 
-    num_params = sum(p.numel() for p in net.parameters())
+    num_params = sum(p.numel() for p in net.parameters()) # type: ignore
     print(f"Model parameters {num_params:,}")
     config_dict["num_params"] = num_params
     size = train_config.net_name.split("-")[-1]
     wandb.init(project="GeoGuessrCoordinatesV2", name=train_config.run_name, config=config_dict, tags=[size])
-    wandb.watch(net, log="all", log_freq=train_config.log_interval * 10) # Log grads & params
-
-    train_loader, eval_loader, test_loader = get_loaders_geoGuessr(
-        train_config.batch_size, directory=train_config.dataset_dir
-    )
+    wandb.watch(net, log="all", log_freq=train_config.log_interval * 10) # type: ignore # Log grads & params
 
     print("Training on device:", device)
     test_metrics, all_test_distances = train(
         config=train_config,
-        net=net,
+        net=net, # type: ignore
         optimizer=optimizer,
         train_loader=train_loader,
         eval_loader=eval_loader,
@@ -381,6 +437,9 @@ if __name__ == "__main__":
     wandb.log(
         {
             "test/mse_loss": test_metrics.get("mse_loss", -1),
+            "test/s2_loss": test_metrics.get("s2_loss", -1),
+            "test/s2_accuracy": test_metrics.get("s2_accuracy", -1),
+            "test/total_loss": test_metrics.get("total_loss", -1),
             "test/load_balancing_loss": test_metrics.get("load_balancing_loss", -1),
             "test/expert_load_cv": test_metrics.get("expert_load_cv", -1),
             "test/dead_experts": test_metrics.get("dead_experts", -1),

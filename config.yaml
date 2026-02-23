@@ -1,8 +1,9 @@
 net_name: "vit-s+16"
 num_experts: 16
 router_k: 4
-load_balance_loss_alpha: 0.01
-embedding_dim: 256
+s2_loss_weight: 0.1
+load_balance_loss_weight: 0.01
+embedding_dim: 512
 freeze_weights: false
 dataset_dir: "dataset/"
 log_interval: 10
@@ -15,6 +16,6 @@ weight_decay: 0.01
 batch_size: 64
 gradient_clipping_norm: 2.0
 early_stop: 3
-run_name: "geohead-vit-s+16-router-k4-e16-alpha0.01-s2level8"
-s2_cell_level: 10
-pretrained_path: "vit-s+16-router-k4-e16-alpha0.01-s2level8.pth"
+run_name: "s2class-geohead-vit-s+16-router-k4-e16-s2level7-alpha0.1-beta0.01"
+s2_cell_level: 7
+pretrained_path: ""
