@@ -36,13 +36,36 @@ def load_config(yaml_path: str) -> TrainConfig:
 
 
 def get_optimizer(config: TrainConfig, net: torch.nn.Module) -> torch.optim.Optimizer:
+    base_lr = config.learning_rate
+    backbone_lr = base_lr / 10.0
+
+    backbone_params = []
+    other_params = []
+
+    for name, param in net.named_parameters():
+        if not param.requires_grad:
+            continue
+
+        # If the parameter belongs to the backbone, route it to the discounted list
+        if name.startswith("backbone."):
+            backbone_params.append(param)
+        else:
+            other_params.append(param)
+
+    param_groups = []
+    if backbone_params:
+        param_groups.append({"params": backbone_params, "lr": backbone_lr})
+    if other_params:
+        param_groups.append({"params": other_params, "lr": base_lr})
+
+
     optimizer : torch.optim.Optimizer
     if config.optimizer == "adam":
-        optimizer = torch.optim.Adam(net.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay, betas=(0.9, config.beta_2))
+        optimizer = torch.optim.Adam(param_groups, lr=config.learning_rate, weight_decay=config.weight_decay, betas=(0.9, config.beta_2))
     elif config.optimizer == "adamW":
-        optimizer = torch.optim.AdamW(net.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
+        optimizer = torch.optim.AdamW(param_groups, lr=config.learning_rate, weight_decay=config.weight_decay)
     elif config.optimizer == "sgd":
-        optimizer = torch.optim.SGD(net.parameters(), lr=config.learning_rate, momentum=0.9, weight_decay=config.weight_decay)
+        optimizer = torch.optim.SGD(param_groups, lr=config.learning_rate, momentum=0.9, weight_decay=config.weight_decay)
     else:
         raise Exception("Invalid optimizer")
 
