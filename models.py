@@ -1,6 +1,6 @@
 import os
 import torch
-import torchvision
+import torchvision  # type: ignore[import-untyped]
 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -47,7 +47,7 @@ class CartesianExpert(nn.Module):
 
 
 class GeoGuessrModel(nn.Module):
-    def __init__(self, backbone: nn.Module, num_features: int, freeze_weights: bool, embedding_dim: int, num_experts: int, k: int, is_vit: bool = False, device="cpu"):
+    def __init__(self, backbone: nn.Module, num_features: int, freeze_weights: bool, embedding_dim: int, num_experts: int, k: int, num_s2_classes: int, is_vit: bool = False, device="cpu"):
         super().__init__()
         self.device = device
         self.is_vit = is_vit
@@ -64,12 +64,25 @@ class GeoGuessrModel(nn.Module):
 
         hidden_size = 512
 
+        # The geo head creates a locational embedding from the features.
         self.geo_head = nn.Sequential(
             nn.Linear(num_features, hidden_size),
+            # nn.BatchNorm1d(hidden_size),  # TODO: test with this line
             nn.GELU(),
             nn.Linear(hidden_size, embedding_dim),
+            # nn.BatchNorm1d(embedding_dim),  # TODO: test with this line
         )
 
+        # The classifier head predicts the S2 cell I, providing some sort of hint to the experts
+        self.s2_classifier_head = nn.Sequential(
+            nn.Linear(embedding_dim, hidden_size),
+            nn.BatchNorm1d(hidden_size),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_size, num_s2_classes),
+        )
+
+        # The experts are the regression heads, predicting (x, y, z) coordinates
         self.num_experts = num_experts
         self.router = TopKRouter(embedding_dim=embedding_dim, num_experts=num_experts, k=k)
         self.experts = nn.ModuleList([CartesianExpert(embedding_dim, hidden_size) for _ in range(num_experts)])
@@ -87,15 +100,18 @@ class GeoGuessrModel(nn.Module):
         x = self.norm(x)
 
         # Produce location-based embedding
-        x = self.geo_head(x)
+        x_embed = self.geo_head(x)
         if embedding_only:
-            return x
+            return x_embed
 
-        experts_weights, experts_indices, all_expert_probs = self.router(x)  # (B, k), (B, k)
+        # S2 cell classification, used as a 'hint' for the router
+        s2_logits = self.s2_classifier_head(x_embed)
+
+        experts_weights, experts_indices, all_expert_probs = self.router(x_embed)  # (B, k), (B, k)
         P = all_expert_probs.mean(dim=0)
 
         load_balancing_loss = torch.tensor(0, dtype=torch.float32, device=self.device)
-        out = torch.zeros(bs, 3, dtype=x.dtype, device=self.device)  # (B, 3)
+        out = torch.zeros(bs, 3, dtype=x_embed.dtype, device=self.device)  # (B, 3)
 
         expert_load = torch.zeros(self.num_experts, dtype=torch.float32, device=self.device)
         total_assignments = bs * self.router.k
@@ -106,7 +122,7 @@ class GeoGuessrModel(nn.Module):
                 continue
 
             weights = experts_weights[batch_idx, top_k_idx]  # (len(batch_idx),)
-            expert_out = expert(x[batch_idx])  # (len(batch_idx), 3)
+            expert_out = expert(x_embed[batch_idx])  # (len(batch_idx), 3)
             weighted_out = expert_out * weights.unsqueeze(-1)  # (len(batch_idx), 3)
             out.index_add_(0, batch_idx, weighted_out)
 
@@ -114,6 +130,7 @@ class GeoGuessrModel(nn.Module):
             load_balancing_loss += f_i * P[i]
             expert_load[i] = f_i
 
+        # Normalize to unit sphere
         out = F.normalize(out, p=2, dim=1, eps=1e-8)
 
         cv_load = torch.std(expert_load) / (expert_load.mean() + 1e-6)
@@ -127,10 +144,10 @@ class GeoGuessrModel(nn.Module):
             "router_prob_entropy": router_prob_entropy,
         }
 
-        return out, load_metrics,
+        return out, s2_logits, load_metrics,
 
 
-def get_convnext(size: str, config: TrainConfig, device) -> nn.Module:
+def get_convnext(size: str, num_s2_classes: int, config: TrainConfig, device) -> nn.Module:
     if size == "tiny":  # 29M params
         weights = torchvision.models.ConvNeXt_Tiny_Weights.DEFAULT
         model = torchvision.models.convnext_tiny
@@ -150,7 +167,7 @@ def get_convnext(size: str, config: TrainConfig, device) -> nn.Module:
     backbone = model(weights=weights)
     num_features = backbone.classifier[2].in_features
 
-    net = GeoGuessrModel(backbone.features, num_features, config.freeze_weights, config.embedding_dim, config.num_experts, config.router_k, is_vit=False, device=device)
+    net = GeoGuessrModel(backbone.features, num_features, config.freeze_weights, config.embedding_dim, config.num_experts, config.router_k, num_s2_classes, is_vit=False, device=device) # type: ignore
     if os.path.isfile(config.pretrained_path):
         print("Resuming training from checkpoint:", config.pretrained_path)
         net.load_state_dict(torch.load(config.pretrained_path, weights_only=True))
@@ -158,7 +175,7 @@ def get_convnext(size: str, config: TrainConfig, device) -> nn.Module:
     return net
 
 
-def get_vit(size: str, config: TrainConfig, device) -> nn.Module:
+def get_vit(size: str, num_s2_classes: int, config: TrainConfig, device) -> nn.Module:
     if size == "s16":  # 21M params
         backbone = AutoModel.from_pretrained("facebook/dinov3-convnext-tiny-pretrain-lvd1689m")
     elif size == "s+16":  # 29M parmas
@@ -177,7 +194,7 @@ def get_vit(size: str, config: TrainConfig, device) -> nn.Module:
 
     num_features = backbone.config.hidden_size
 
-    net = GeoGuessrModel(backbone, num_features, config.freeze_weights, config.embedding_dim, config.num_experts, config.router_k, is_vit=True, device=device)
+    net = GeoGuessrModel(backbone, num_features, config.freeze_weights, config.embedding_dim, config.num_experts, config.router_k, num_s2_classes, is_vit=True, device=device)
     if os.path.isfile(config.pretrained_path):
         print("Resuming training from checkpoint:", config.pretrained_path)
         net.load_state_dict(torch.load(config.pretrained_path, weights_only=True))
@@ -185,12 +202,12 @@ def get_vit(size: str, config: TrainConfig, device) -> nn.Module:
     return net
 
 
-def get_net(config: TrainConfig, device="cpu") -> torch.nn.Module | Any:
+def get_net(num_s2_classes: int, config: TrainConfig, device="cpu") -> torch.nn.Module | Any:
     net_name = config.net_name
     if "convnext" in net_name:
-        return get_convnext(net_name.split("-")[-1], config, device).to(device)
+        return get_convnext(net_name.split("-")[-1], num_s2_classes, config, device).to(device)
     if "vit" in net_name:
-        return get_vit(net_name.split("-")[-1], config, device).to(device)
+        return get_vit(net_name.split("-")[-1], num_s2_classes, config, device).to(device)
     else:
         print(f"{net_name} not supported")
         exit(0)
