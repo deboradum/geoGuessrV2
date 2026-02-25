@@ -67,10 +67,10 @@ class GeoGuessrModel(nn.Module):
         # The geo head creates a locational embedding from the features.
         self.geo_head = nn.Sequential(
             nn.Linear(num_features, hidden_size),
-            # nn.BatchNorm1d(hidden_size),  # TODO: test with this line
+            nn.BatchNorm1d(hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, embedding_dim),
-            # nn.BatchNorm1d(embedding_dim),  # TODO: test with this line
+            nn.BatchNorm1d(embedding_dim),
         )
 
         # The classifier head predicts the S2 cell I, providing some sort of hint to the experts
