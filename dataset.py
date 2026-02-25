@@ -125,43 +125,40 @@ class PKBatchSampler(Sampler):
         self.p = p
         self.k = k
 
-        all_cell_ids = list(self.data_source.keys())
+        self.all_cell_ids = list(self.data_source.keys())
 
         self.cells = [
-            cell for cell in all_cell_ids
+            cell for cell in self.all_cell_ids
             if len(self.data_source[cell]) >= k
         ]
 
         total_images = sum(len(indices) for indices in self.data_source.values())
-        used_images = sum(len(self.data_source[cell]) for cell in self.cells)
-        dropped_images = total_images - used_images
-
-        self.num_batches = len(self.cells) // self.p
-        remainder_cells = len(self.cells) % self.p
+        self.num_batches = max(1, total_images // (self.p * self.k))
 
         print(f"\n" + "="*40)
         print(f"PKBatchSampler Diagnostic (p={p}, k={k})")
-        print(f"Total Unique S2 Cells: {len(all_cell_ids)}")
-        print(f"Valid Cells (size >= {k}): {len(self.cells)}")
-        print(f"Cells discarded (too small): {len(all_cell_ids) - len(self.cells)}")
-        print(f"Cells discarded (remainder of P): {remainder_cells}")
-        print(f"-"*40)
+        print(f"Total Unique S2 Cells: {len(self.all_cell_ids)}")
         print(f"Total Images in Dataset: {total_images}")
-        print(f"Images available to train: {used_images}")
-        print(f"Images effectively LOST: {dropped_images} ({dropped_images/total_images:.1%})")
+        print(f"Images effectively LOST: 0 (0.0%)")
         print(f"Total Batches per Epoch: {self.num_batches}")
+        print(f"Effective Epoch Size: {self.num_batches * self.p * self.k} images")
         print("="*40 + "\n")
 
     def __iter__(self):
-        random.shuffle(self.cells)
-
         for i in range(self.num_batches):
-            batch_cell_ids = self.cells[i * self.p : (i + 1) * self.p]
+            if len(self.all_cell_ids) >= self.p:
+                batch_cell_ids = random.sample(self.all_cell_ids, self.p)
+            else:
+                # Fallback just in case you somehow have fewer total unique cells than P
+                batch_cell_ids = random.choices(self.all_cell_ids, k=self.p)
 
             batch_indices = []
             for cell_id in batch_cell_ids:
                 possible_indices = self.data_source[cell_id]
-                selected_indices = random.sample(possible_indices, self.k)
+                if len(possible_indices) >= self.k:
+                    selected_indices = random.sample(possible_indices, self.k)
+                else:
+                    selected_indices = random.choices(possible_indices, k=self.k)
                 batch_indices.extend(selected_indices)
 
             yield batch_indices
