@@ -183,9 +183,10 @@ def train(
     )
     print(
         f"[Eval] Epoch 0, Time: {taken:.2f}s\n"
-        f"  MSEloss:     {val_metrics.get('mse_loss', 0.0):.2f}\n"
+        f"  dist loss:   {val_metrics.get('mse_loss', 0.0):.2f}\n"
+        f"  aux loss:    {val_metrics.get('load_balancing_loss', 0.0):.2f}\n"
         f"  S2 loss:     {val_metrics.get('s2_loss', 0.0):.2f}\n"
-        f"  S2 acc:      {val_metrics.get('s2_accuracy', 0.0):.2f}\n"
+        f"  S2 acc:      {val_metrics.get('s2_accuracy', 0.0):.3f}\n"
         f"  total loss:  {val_metrics.get('total_loss', 0.0):.2f}\n"
         f"  Score:       {val_metrics.get('score_avg', 0.0):,.2f} ± {val_metrics.get('score_std', 0.0):,.2f}\n"
         f"  Distance:    {val_metrics.get('distance_avg', 0.0):,.2f} ± {val_metrics.get('distance_std', 0.0):,.2f} km\n"
@@ -295,9 +296,10 @@ def train(
                 )
                 print(
                     f"Epoch {e}, step {i} (Global {global_step}), Time: {taken:.2f}s ({ips:.2f} i/s)\n"
-                    f"  MSEloss:     {train_metrics.get('mse_loss', 0.0):.2f}\n"
+                    f"  dist loss:   {train_metrics.get('mse_loss', 0.0):.2f}\n"
+                    f"  aux loss:    {train_metrics.get('load_balancing_loss', 0.0):.2f}\n"
                     f"  S2 loss:     {train_metrics.get('s2_loss', 0.0):.2f}\n"
-                    f"  S2 acc:      {train_metrics.get('s2_accuracy', 0.0):.2f}\n"
+                    f"  S2 acc:      {train_metrics.get('s2_accuracy', 0.0):.3f}\n"
                     f"  total loss:  {train_metrics.get('total_loss', 0.0):.2f}\n"
                     f"  Score:       {train_metrics.get('score_avg', 0.0):,.2f} ± {train_metrics.get('score_std', 0.0):,.2f}\n"
                     f"  Distance:    {train_metrics.get('distance_avg', 0.0):,.2f} ± {train_metrics.get('distance_std', 0.0):,.2f} km\n"
@@ -355,9 +357,10 @@ def train(
         )
         print(
             f"[Eval] Epoch {e+1}, Time: {taken:.2f}s\n"
-            f"  MSEloss:     {val_metrics.get('mse_loss', 0.0):.2f}\n"
+            f"  dist loss:   {val_metrics.get('mse_loss', 0.0):.2f}\n"
+            f"  aux loss:    {val_metrics.get('load_balancing_loss', 0.0):.2f}\n"
             f"  S2 loss:     {val_metrics.get('s2_loss', 0.0):.2f}\n"
-            f"  S2 acc:      {val_metrics.get('s2_accuracy', 0.0):.2f}\n"
+            f"  S2 acc:      {val_metrics.get('s2_accuracy', 0.0):.3f}\n"
             f"  total loss:  {val_metrics.get('total_loss', 0.0):.2f}\n"
             f"  Score:       {val_metrics.get('score_avg', 0.0):,.2f} ± {val_metrics.get('score_std', 0.0):,.2f}\n"
             f"  Distance:    {val_metrics.get('distance_avg', 0.0):,.2f} ± {val_metrics.get('distance_std', 0.0):,.2f} km\n"
