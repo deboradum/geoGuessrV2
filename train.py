@@ -37,19 +37,16 @@ def loss_fn(pred, target):
 
     mse_loss = torch.nn.MSELoss()(pred, target_cartesian)
 
-    pred_lon_rad, pred_lat_rad = torch.deg2rad(pred_lon_deg), torch.deg2rad(pred_lat_deg)
-    true_lon_rad, true_lat_rad = torch.deg2rad(true_lon_deg), torch.deg2rad(true_lat_deg)
+    chordal_dist = torch.norm(pred - target_cartesian, p=2, dim=1)
+    clamped_ratio = torch.clamp(chordal_dist / 2.0, min=0.0, max=1.0 - 1e-7)
 
-    delta_phi = true_lat_rad - pred_lat_rad
-    delta_lambda = true_lon_rad - pred_lon_rad
+    c = 2.0 * torch.asin(clamped_ratio)
 
-    a = torch.sin(delta_phi / 2) ** 2 + torch.cos(pred_lat_rad) * torch.cos(true_lat_rad) * torch.sin(delta_lambda / 2) ** 2
-    c = 2 * torch.atan2(torch.sqrt(a), torch.sqrt(1 - a))
 
     with torch.no_grad():
-        distance = EARTH_RADIUS * c / 1000  # km
-        scaling_factor = 2000  # km
-        score = 5000 * torch.exp(-distance / scaling_factor)
+        distance = EARTH_RADIUS * c / 1000.0  # km
+        scaling_factor = 2000.0  # km
+        score = 5000.0 * torch.exp(-distance / scaling_factor)
 
     return {
         "mse_loss": mse_loss,
