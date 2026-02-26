@@ -74,18 +74,18 @@ class GeoGuessrModel(nn.Module):
         )
 
         # The classifier head predicts the S2 cell I, providing some sort of hint to the experts
-        self.s2_classifier_head = nn.Sequential(
-            nn.Linear(embedding_dim, hidden_size),
+        self.s2_feature_layer = nn.Sequential(
+            nn.Linear(num_features, hidden_size),
             nn.BatchNorm1d(hidden_size),
             nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(hidden_size, num_s2_classes),
         )
+        self.s2_projection_layer = nn.Linear(hidden_size, num_s2_classes)
 
         # The experts are the regression heads, predicting (x, y, z) coordinates
+        experts_input_dim = embedding_dim + hidden_size
         self.num_experts = num_experts
-        self.router = TopKRouter(embedding_dim=embedding_dim, num_experts=num_experts, k=k)
-        self.experts = nn.ModuleList([CartesianExpert(embedding_dim, hidden_size) for _ in range(num_experts)])
+        self.router = TopKRouter(embedding_dim=experts_input_dim, num_experts=num_experts, k=k)
+        self.experts = nn.ModuleList([CartesianExpert(experts_input_dim, hidden_size) for _ in range(num_experts)])
 
     def forward(self, x, embedding_only: bool = False):
         bs = x.shape[0]
@@ -105,13 +105,16 @@ class GeoGuessrModel(nn.Module):
             return x_embed
 
         # S2 cell classification, used as a 'hint' for the router
-        s2_logits = self.s2_classifier_head(x_embed)
+        s2_features = self.s2_feature_layer(x)
+        s2_logits = self.s2_projection_layer(s2_features)
 
-        experts_weights, experts_indices, all_expert_probs = self.router(x_embed)  # (B, k), (B, k)
+        x_combined = torch.cat([x_embed, s2_features.detach()], dim=-1)
+
+        experts_weights, experts_indices, all_expert_probs = self.router(x_combined)  # (B, k), (B, k)
         P = all_expert_probs.mean(dim=0)
 
         load_balancing_loss = torch.tensor(0, dtype=torch.float32, device=self.device)
-        out = torch.zeros(bs, 3, dtype=x_embed.dtype, device=self.device)  # (B, 3)
+        out = torch.zeros(bs, 3, dtype=x_combined.dtype, device=self.device)  # (B, 3)
 
         expert_load = torch.zeros(self.num_experts, dtype=torch.float32, device=self.device)
         total_assignments = bs * self.router.k
@@ -122,7 +125,7 @@ class GeoGuessrModel(nn.Module):
                 continue
 
             weights = experts_weights[batch_idx, top_k_idx]  # (len(batch_idx),)
-            expert_out = expert(x_embed[batch_idx])  # (len(batch_idx), 3)
+            expert_out = expert(x_combined[batch_idx])  # (len(batch_idx), 3)
             weighted_out = expert_out * weights.unsqueeze(-1)  # (len(batch_idx), 3)
             out.index_add_(0, batch_idx, weighted_out)
 
