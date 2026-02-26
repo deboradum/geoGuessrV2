@@ -38,8 +38,10 @@ def load_config(yaml_path: str) -> TrainConfig:
 def get_optimizer(config: TrainConfig, net: torch.nn.Module) -> torch.optim.Optimizer:
     base_lr = config.learning_rate
     backbone_lr = base_lr / 10.0
+    s2_head_lr = base_lr * 10.0
 
     backbone_params = []
+    s2_head_params = []
     other_params = []
 
     for name, param in net.named_parameters():
@@ -49,15 +51,18 @@ def get_optimizer(config: TrainConfig, net: torch.nn.Module) -> torch.optim.Opti
         # If the parameter belongs to the backbone, route it to the discounted list
         if name.startswith("backbone."):
             backbone_params.append(param)
+        elif name.startswith("s2_feature_layer.") or name.startswith("s2_projection_layer."):
+            s2_head_params.append(param)
         else:
             other_params.append(param)
 
     param_groups = []
     if backbone_params:
         param_groups.append({"params": backbone_params, "lr": backbone_lr})
+    if s2_head_params:
+        param_groups.append({"params": s2_head_params, "lr": s2_head_lr})
     if other_params:
         param_groups.append({"params": other_params, "lr": base_lr})
-
 
     optimizer : torch.optim.Optimizer
     if config.optimizer == "adam":
