@@ -56,44 +56,53 @@ def create_splits_googleMaps(dataset_dir, split=(80, 10, 10)):
 
 def create_splits_geoGuessr(dataset_dir, split=(80, 10, 10)):
     # Collects all labels
-    all_data = []
     location_dict = {}
-    for path in os.listdir(dataset_dir):
-        if not path.endswith(".csv"):
+
+    for fname in os.listdir(dataset_dir):
+        if not fname.endswith(".csv"):
             continue
-        location_data = pd.read_csv(
-            f"{dataset_dir}/{path}",
+
+        df = pd.read_csv(
+            os.path.join(dataset_dir, fname),
             header=None,
             names=["panoidID", "lat", "lng"],
-        ).drop_duplicates(subset="panoidID", keep="first")
-        tmp_location_dict = location_data.set_index("panoidID")[["lat", "lng"]].to_dict(
-            orient="index"
         )
-        tmp_location_dict = {k: (v["lat"], v["lng"]) for k, v in tmp_location_dict.items()}
-        location_dict.update(tmp_location_dict)
 
-    # Gets all images and their labels
+        # normalize panoidID
+        df["panoidID"] = df["panoidID"].str.replace(r"\.jpg$", "", regex=True)
+
+        # keep first occurrence per panoidID
+        df = df.drop_duplicates(subset="panoidID", keep="first")
+
+        for panoidID, lat, lng in df.itertuples(index=False):
+            location_dict[panoidID] = (lat, lng)
+
+    print(len(location_dict), "locations")
+    all_data = []
+
     for img_path in os.listdir(dataset_dir):
         match = re.match(r"^(.*?)\.jpg$", img_path)
         if not match:
-            print(img_path, "is no match")
             continue
 
         panoidID = match.group(1)
-        lat, lng = location_dict[panoidID]
 
+        if panoidID not in location_dict:
+            continue  # safe skip
+
+        lat, lng = location_dict[panoidID]
         all_data.append((img_path, lat, lng))
 
-    # Create splits
     random.shuffle(all_data)
     total = len(all_data)
+
     train_size = int(total * split[0] / 100)
     val_size = int(total * split[1] / 100)
+
     train_data = all_data[:train_size]
     val_data = all_data[train_size : train_size + val_size]
     test_data = all_data[train_size + val_size :]
 
-    # Write splits
     def write_split(data, filename):
         with open(os.path.join(dataset_dir, filename), "w") as f:
             for path, lat, lng in data:
@@ -117,6 +126,6 @@ def get_args():
 if __name__ == "__main__":
     args = get_args()
     if args.mode == "geoGuessr":
-        create_splits_geoGuessr("geoGuessrDataset")
+        create_splits_geoGuessr("finalDataset")
     elif args.mode == "googleMaps":
         create_splits_googleMaps("mapsDataset")
