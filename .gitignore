@@ -9,6 +9,7 @@ cookies.txt
 *.pth
 *.csv
 *.html
+*.tar.gz
 
 __pycache__
 wandb*
