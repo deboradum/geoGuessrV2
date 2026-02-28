@@ -75,7 +75,7 @@ class GeoGuessrModel(nn.Module):
 
         # The classifier head predicts the S2 cell I, providing some sort of hint to the experts
         self.s2_feature_layer = nn.Sequential(
-            nn.Linear(num_features, hidden_size),
+            nn.Linear(embedding_dim, hidden_size),
             nn.BatchNorm1d(hidden_size),
             nn.GELU(),
         )
@@ -105,7 +105,7 @@ class GeoGuessrModel(nn.Module):
             return x_embed
 
         # S2 cell classification, used as a 'hint' for the router
-        s2_features = self.s2_feature_layer(x)
+        s2_features = self.s2_feature_layer(x_embed)
         s2_logits = self.s2_projection_layer(s2_features)
 
         x_combined = torch.cat([x_embed, s2_features.detach()], dim=-1)
