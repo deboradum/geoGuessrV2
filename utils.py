@@ -66,11 +66,17 @@ def get_optimizer(config: TrainConfig, net: torch.nn.Module) -> torch.optim.Opti
 
     optimizer : torch.optim.Optimizer
     if config.optimizer == "adam":
+        print(f"Using {config.optimizer} optimizer")
         optimizer = torch.optim.Adam(param_groups, lr=config.learning_rate, weight_decay=config.weight_decay, betas=(0.9, config.beta_2))
     elif config.optimizer == "adamW":
+        print(f"Using {config.optimizer} optimizer")
         optimizer = torch.optim.AdamW(param_groups, lr=config.learning_rate, weight_decay=config.weight_decay)
     elif config.optimizer == "sgd":
+        print(f"Using {config.optimizer} optimizer")
         optimizer = torch.optim.SGD(param_groups, lr=config.learning_rate, momentum=0.9, weight_decay=config.weight_decay)
+    elif config.optimizer == "muon":
+        print(f"Using {config.optimizer} optimizer")
+        optimizer = torch.optim.Muon(param_groups, lr=config.learning_rate, weight_decay=config.weight_decay)
     else:
         raise Exception("Invalid optimizer")
 
