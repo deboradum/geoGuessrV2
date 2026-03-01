@@ -112,6 +112,7 @@ if __name__ == "__main__":
                 "test/distance_histogram": wandb.Histogram(all_test_distances),
             }
         )
+        wandb.finish()
 
     sweep_id = wandb.sweep(sweep_config, project="GeoGuessrCoordinates")
     wandb.agent(sweep_id, function=sweep_train)
