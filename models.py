@@ -70,7 +70,6 @@ class GeoGuessrModel(nn.Module):
             nn.BatchNorm1d(hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, embedding_dim),
-            nn.BatchNorm1d(embedding_dim),
         )
 
         # The classifier head predicts the S2 cell I, providing some sort of hint to the experts
@@ -101,6 +100,8 @@ class GeoGuessrModel(nn.Module):
 
         # Produce location-based embedding
         x_embed = self.geo_head(x)
+        x_embed = F.normalize(x_embed, p=2, dim=1)
+
         if embedding_only:
             return x_embed
 
