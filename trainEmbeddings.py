@@ -25,13 +25,13 @@ def evaluate(net, loader):
 
     net.eval()
     with torch.no_grad():
-        for X, y in loader:
-            X, y = X.to(device), y.to(device)
+        for X, (y_coords, y_s2) in loader:
+            X, y_coords, y_s2 = X.to(device), y_coords.to(device), y_s2.to(device)
 
             embeddings = net(X, embedding_only=True)
-            miner_output = miner_fn(embeddings, y)
+            miner_output = miner_fn(embeddings, y_s2)
 
-            loss = loss_fn(embeddings, y, miner_output)
+            loss = loss_fn(embeddings, y_s2, miner_output)
             bs = X.size(0)
 
             total_loss += loss * bs
@@ -79,14 +79,14 @@ def train(
 
         net.train()
         optimizer.zero_grad()
-        for i, (X, y) in enumerate(train_loader):
-            X, y = X.to(device), y.to(device)
+        for i, (X, (y_coords, y_s2)) in enumerate(train_loader):
+            X, y_coords, y_s2 = X.to(device), y_coords.to(device), y_s2.to(device)
             bs = X.shape[0]
 
             embeddings = net(X, embedding_only=True)
-            miner_output = miner_fn(embeddings, y)
+            miner_output = miner_fn(embeddings, y_s2)
 
-            loss = loss_fn(embeddings, y, miner_output)
+            loss = loss_fn(embeddings, y_s2, miner_output)
             total_loss += loss.item()
 
             loss.backward()
@@ -167,8 +167,12 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+    train_loader, eval_loader, test_loader = get_loaders_geoGuessrEmbedding(
+        directory=train_config.dataset_dir, s2_cell_level=train_config.s2_cell_level
+    )
+
     print("Setting up model")
-    net = get_net(config=train_config, device=device)
+    net = get_net(train_loader.dataset.num_unique_s2_classes, config=train_config, device=device) # type: ignore
     optimizer = get_optimizer(train_config, net)
 
     if args.compile:
@@ -181,11 +185,6 @@ if __name__ == "__main__":
     size = train_config.net_name.split("-")[-1]
     wandb.init(project="GeoGuessrCoordinatesV2-metricModel", name=train_config.run_name, config=config_dict, tags=[size])
     wandb.watch(net, log="all", log_freq=train_config.log_interval * 10) # Log grads & params
-
-    train_loader, eval_loader, test_loader = get_loaders_geoGuessrEmbedding(
-        directory=train_config.dataset_dir,
-        s2_cell_level=train_config.s2_cell_level,
-    )
 
     print("Training on device:", device)
     test_loss = train(
