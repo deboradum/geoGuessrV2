@@ -1,6 +1,13 @@
+import os
 import math
 import yaml  # type: ignore[import-untyped]
 import torch
+import time
+import hashlib
+import numpy as np
+import cartopy.crs as ccrs
+import matplotlib.pyplot as plt
+import cartopy.feature as cfeature
 
 from dataclasses import dataclass
 
@@ -110,3 +117,60 @@ def cartesian_to_gcs_tensor(x, y, z):
     lon_deg = torch.rad2deg(lon_rad)
 
     return lat_deg, lon_deg
+
+def save_predictions(images, pred, target, output_dir="visualizations"):
+    os.makedirs(output_dir, exist_ok=True)
+
+    pred_x, pred_y, pred_z = pred[:, 0], pred[:, 1], pred[:, 2]
+    pred_lon_deg, pred_lat_deg = cartesian_to_gcs_tensor(pred_x, pred_y, pred_z)
+    true_lon_deg, true_lat_deg = target[:, 0], target[:, 1]
+
+    batch_size = images.shape[0]
+
+    mean = torch.tensor([0.485, 0.456, 0.406], device=images.device).view(1, 3, 1, 1)
+    std = torch.tensor([0.229, 0.224, 0.225], device=images.device).view(1, 3, 1, 1)
+
+    images = images * std + mean
+
+    for i in range(batch_size):
+        fig = plt.figure(figsize=(12, 5))
+
+        # original image
+        ax_img = fig.add_subplot(1, 2, 1)
+        img_np = images[i].detach().cpu().permute(1, 2, 0).numpy()
+        img_np = np.clip(img_np, 0, 1)
+        ax_img.imshow(img_np)
+        ax_img.axis('off')
+        ax_img.set_title("Input Image")
+
+        # World Map
+        ax_map = fig.add_subplot(1, 2, 2, projection=ccrs.PlateCarree())
+        ax_map.add_feature(cfeature.COASTLINE)
+        ax_map.add_feature(cfeature.BORDERS, linestyle=':')
+        ax_map.set_global()
+
+        # True coordinates (Blue)
+        ax_map.plot(
+            true_lon_deg[i].item(), true_lat_deg[i].item(),
+            color='blue', marker='o', markersize=8,
+            transform=ccrs.PlateCarree(), label='True'
+        )
+
+        # Predicted coordinates (Red)
+        ax_map.plot(
+            pred_lon_deg[i].item(), pred_lat_deg[i].item(),
+            color='red', marker='x', markersize=8, markeredgewidth=2,
+            transform=ccrs.PlateCarree(), label='Prediction'
+        )
+
+        ax_map.legend(loc='lower left')
+        ax_map.set_title("Prediction vs True Location")
+
+        t_lon, t_lat = true_lon_deg[i].item(), true_lat_deg[i].item()
+        coord_string = f"{t_lon:.5f}_{t_lat:.5f}".encode('utf-8')
+        deterministic_hash = hashlib.md5(coord_string).hexdigest()[:10]
+        filename = f"sample_{deterministic_hash}.png"
+        filepath = os.path.join(output_dir, filename)
+
+        plt.savefig(filepath, bbox_inches='tight', dpi=150)
+        plt.close(fig)

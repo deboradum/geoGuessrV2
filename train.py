@@ -10,8 +10,8 @@ import torch.nn.functional as F
 from collections import defaultdict
 
 from models import get_net
-from dataset import get_loaders_geoGuessrEmbedding
-from utils import TrainConfig, load_config, get_optimizer, gcs_to_cartesian_tensor, cartesian_to_gcs_tensor
+from dataset import get_loaders_geoGuessrEmbedding, get_loaders_geoGuessr
+from utils import TrainConfig, load_config, get_optimizer, gcs_to_cartesian_tensor, cartesian_to_gcs_tensor, save_predictions
 
 EARTH_RADIUS = 6371000  # meters
 
@@ -76,14 +76,14 @@ def loss_fn(pred, target):
     }
 
 
-def evaluate(net, loader, s2_loss_weight, load_balance_loss_weight):
+def evaluate(net, loader, s2_loss_weight, load_balance_loss_weight, epoch: int|str):
     val_metrics_sums = defaultdict(float)
     total_samples = 0
     all_distances = []
 
     net.eval()
     with torch.no_grad():
-        for X, (y_coords, y_s2) in loader:
+        for i, (X, (y_coords, y_s2)) in enumerate(loader):
             X, y_coords, y_s2 = X.to(device), y_coords.to(device), y_s2.to(device)
             bs = X.size(0)
 
@@ -117,6 +117,9 @@ def evaluate(net, loader, s2_loss_weight, load_balance_loss_weight):
 
             total_samples += bs
 
+            if i < 2:
+                save_predictions(X, out, y_coords, output_dir=f"visualizations/{epoch}/")
+
     final_metrics_avg = {}
     if total_samples > 0:
         for key, total_sum in val_metrics_sums.items():
@@ -141,7 +144,7 @@ def train(
     # Evaluate
     start = time.perf_counter()
     net.eval()
-    val_metrics, all_eval_distances = evaluate(net, eval_loader, config.s2_loss_weight, config.load_balance_loss_weight)
+    val_metrics, all_eval_distances = evaluate(net, eval_loader, config.s2_loss_weight, config.load_balance_loss_weight, epoch=0)
     net.train()
     taken = time.perf_counter() - start
     wandb.log(
@@ -315,7 +318,7 @@ def train(
         # Evaluate
         start = time.perf_counter()
         net.eval()
-        val_metrics, all_eval_distances = evaluate(net, eval_loader, config.s2_loss_weight, config.load_balance_loss_weight)
+        val_metrics, all_eval_distances = evaluate(net, eval_loader, config.s2_loss_weight, config.load_balance_loss_weight, epoch=e)
         net.train()
         taken = time.perf_counter() - start
         wandb.log(
@@ -383,7 +386,7 @@ def train(
     net.load_state_dict(best_state_dict)
 
     net.eval()
-    return evaluate(net, test_loader, config.s2_loss_weight, config.load_balance_loss_weight)
+    return evaluate(net, test_loader, config.s2_loss_weight, config.load_balance_loss_weight, epoch="test")
 
 
 def get_args():
