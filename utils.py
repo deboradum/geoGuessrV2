@@ -137,6 +137,9 @@ def save_predictions(images, pred, target, distances, output_dir="visualizations
     for i in range(batch_size):
         fig = plt.figure(figsize=(12, 5))
 
+        t_lon, t_lat = true_lon_deg[i].item(), true_lat_deg[i].item()
+        p_lon, p_lat = pred_lon_deg[i].item(), pred_lat_deg[i].item()
+
         # original image
         ax_img = fig.add_subplot(1, 2, 1)
         img_np = images[i].detach().cpu().permute(1, 2, 0).numpy()
@@ -153,16 +156,18 @@ def save_predictions(images, pred, target, distances, output_dir="visualizations
 
         # True coordinates (Blue)
         ax_map.plot(
-            true_lon_deg[i].item(), true_lat_deg[i].item(),
+            t_lon, t_lat,
             color='blue', marker='o', markersize=8,
-            transform=ccrs.PlateCarree(), label='True'
+            transform=ccrs.PlateCarree(),
+            label=f'True: {t_lat:.4f}°, {t_lon:.4f}°'
         )
 
         # Predicted coordinates (Red)
         ax_map.plot(
-            pred_lon_deg[i].item(), pred_lat_deg[i].item(),
+            p_lon, p_lat,
             color='red', marker='x', markersize=8, markeredgewidth=2,
-            transform=ccrs.PlateCarree(), label='Prediction'
+            transform=ccrs.PlateCarree(),
+            label=f'Pred: {p_lat:.4f}°, {p_lon:.4f}°'
         )
 
         ax_map.legend(loc='lower left')
@@ -170,10 +175,9 @@ def save_predictions(images, pred, target, distances, output_dir="visualizations
         sample_dist = distances_km[i]
         ax_map.set_title(f"Prediction vs True Location (Error: {sample_dist:,.2f} km)")
 
-        t_lon, t_lat = true_lon_deg[i].item(), true_lat_deg[i].item()
         coord_string = f"{t_lon:.5f}_{t_lat:.5f}".encode('utf-8')
-        deterministic_hash = hashlib.md5(coord_string).hexdigest()[:10]
-        filename = f"sample_{deterministic_hash}.png"
+        hash = hashlib.md5(coord_string).hexdigest()[:10]
+        filename = f"{hash}.png"
         filepath = os.path.join(output_dir, filename)
 
         plt.savefig(filepath, bbox_inches='tight', dpi=150)
