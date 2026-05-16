@@ -6,6 +6,7 @@ import time
 import hashlib
 import numpy as np
 import cartopy.crs as ccrs
+import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import cartopy.feature as cfeature
 
@@ -125,6 +126,20 @@ def save_predictions(images, pred, target, output_dir="visualizations"):
     pred_lon_deg, pred_lat_deg = cartesian_to_gcs_tensor(pred_x, pred_y, pred_z)
     true_lon_deg, true_lat_deg = target[:, 0], target[:, 1]
 
+    with torch.no_grad():
+        true_x, true_y, true_z = gcs_to_cartesian_tensor(true_lat_deg, true_lon_deg)
+        target_cartesian = torch.stack([true_x, true_y, true_z], dim=1)
+        target_cartesian = F.normalize(target_cartesian, p=2, dim=1, eps=1e-8)
+
+        # Re-normalize predictions just to match the loss_fn stability guarantees
+        pred_normalized = F.normalize(pred, p=2, dim=1, eps=1e-8)
+
+        chordal_dist = torch.norm(pred_normalized - target_cartesian, p=2, dim=1)
+        clamped_ratio = torch.clamp(chordal_dist / 2.0, min=0.0, max=1.0 - 1e-7)
+        c = 2.0 * torch.asin(clamped_ratio)
+
+        distances_km = (6371000 * c / 1000.0).cpu().numpy()
+
     batch_size = images.shape[0]
 
     mean = torch.tensor([0.485, 0.456, 0.406], device=images.device).view(1, 3, 1, 1)
@@ -164,7 +179,9 @@ def save_predictions(images, pred, target, output_dir="visualizations"):
         )
 
         ax_map.legend(loc='lower left')
-        ax_map.set_title("Prediction vs True Location")
+
+        sample_dist = distances_km[i]
+        ax_map.set_title(f"Prediction vs True Location (Error: {sample_dist:,.2f} km)")
 
         t_lon, t_lat = true_lon_deg[i].item(), true_lat_deg[i].item()
         coord_string = f"{t_lon:.5f}_{t_lat:.5f}".encode('utf-8')
