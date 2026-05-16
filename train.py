@@ -118,7 +118,7 @@ def evaluate(net, loader, s2_loss_weight, load_balance_loss_weight, epoch: int|s
             total_samples += bs
 
             if i < 2:
-                save_predictions(X, out, y_coords, output_dir=f"visualizations/{epoch}/")
+                save_predictions(X, out, y_coords, distances=batch_metrics["distances_raw"], output_dir=f"visualizations/{epoch}/")
 
     final_metrics_avg = {}
     if total_samples > 0:
@@ -144,7 +144,7 @@ def train(
     # Evaluate
     start = time.perf_counter()
     net.eval()
-    val_metrics, all_eval_distances = evaluate(net, eval_loader, config.s2_loss_weight, config.load_balance_loss_weight, epoch=0)
+    val_metrics, all_eval_distances = evaluate(net, eval_loader, config.s2_loss_weight, config.load_balance_loss_weight, epoch="initial")
     net.train()
     taken = time.perf_counter() - start
     wandb.log(

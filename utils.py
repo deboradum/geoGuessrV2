@@ -119,32 +119,19 @@ def cartesian_to_gcs_tensor(x, y, z):
 
     return lat_deg, lon_deg
 
-def save_predictions(images, pred, target, output_dir="visualizations"):
+def save_predictions(images, pred, target, distances, output_dir="visualizations"):
     os.makedirs(output_dir, exist_ok=True)
 
     pred_x, pred_y, pred_z = pred[:, 0], pred[:, 1], pred[:, 2]
     pred_lon_deg, pred_lat_deg = cartesian_to_gcs_tensor(pred_x, pred_y, pred_z)
     true_lon_deg, true_lat_deg = target[:, 0], target[:, 1]
 
-    with torch.no_grad():
-        true_x, true_y, true_z = gcs_to_cartesian_tensor(true_lat_deg, true_lon_deg)
-        target_cartesian = torch.stack([true_x, true_y, true_z], dim=1)
-        target_cartesian = F.normalize(target_cartesian, p=2, dim=1, eps=1e-8)
-
-        # Re-normalize predictions just to match the loss_fn stability guarantees
-        pred_normalized = F.normalize(pred, p=2, dim=1, eps=1e-8)
-
-        chordal_dist = torch.norm(pred_normalized - target_cartesian, p=2, dim=1)
-        clamped_ratio = torch.clamp(chordal_dist / 2.0, min=0.0, max=1.0 - 1e-7)
-        c = 2.0 * torch.asin(clamped_ratio)
-
-        distances_km = (6371000 * c / 1000.0).cpu().numpy()
+    distances_km = distances.detach().cpu().numpy()
 
     batch_size = images.shape[0]
 
     mean = torch.tensor([0.485, 0.456, 0.406], device=images.device).view(1, 3, 1, 1)
     std = torch.tensor([0.229, 0.224, 0.225], device=images.device).view(1, 3, 1, 1)
-
     images = images * std + mean
 
     for i in range(batch_size):
