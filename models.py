@@ -64,24 +64,16 @@ class GeoGuessrModel(nn.Module):
 
         hidden_size = 512
 
-        # The geo head creates a locational embedding from the features.
-        self.geo_head = nn.Sequential(
-            nn.Linear(num_features, hidden_size),
-            nn.BatchNorm1d(hidden_size),
-            nn.GELU(),
-            nn.Linear(hidden_size, embedding_dim),
-        )
-
         # The classifier head predicts the S2 cell I, providing some sort of hint to the experts
         self.s2_feature_layer = nn.Sequential(
-            nn.Linear(embedding_dim, hidden_size),
+            nn.Linear(num_features, hidden_size),
             nn.BatchNorm1d(hidden_size),
             nn.GELU(),
         )
         self.s2_projection_layer = nn.Linear(hidden_size, num_s2_classes)
 
         # The experts are the regression heads, predicting (x, y, z) coordinates
-        experts_input_dim = embedding_dim + hidden_size
+        experts_input_dim = num_features + hidden_size
         self.num_experts = num_experts
         self.router = TopKRouter(embedding_dim=experts_input_dim, num_experts=num_experts, k=k)
         self.experts = nn.ModuleList([CartesianExpert(experts_input_dim, hidden_size) for _ in range(num_experts)])
@@ -98,18 +90,14 @@ class GeoGuessrModel(nn.Module):
             x = torch.flatten(x, 1)
         x = self.norm(x)
 
-        # Produce location-based embedding
-        x_embed = self.geo_head(x)
-        x_embed = F.normalize(x_embed, p=2, dim=1)
-
         if embedding_only:
-            return x_embed
+            return x
 
         # S2 cell classification, used as a 'hint' for the router
-        s2_features = self.s2_feature_layer(x_embed)
+        s2_features = self.s2_feature_layer(x)
         s2_logits = self.s2_projection_layer(s2_features)
 
-        x_combined = torch.cat([x_embed, s2_features.detach()], dim=-1)
+        x_combined = torch.cat([x, s2_features.detach()], dim=-1)
 
         experts_weights, experts_indices, all_expert_probs = self.router(x_combined)  # (B, k), (B, k)
         P = all_expert_probs.mean(dim=0)
