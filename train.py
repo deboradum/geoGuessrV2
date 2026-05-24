@@ -425,7 +425,13 @@ if __name__ == "__main__":
     print(f"Model parameters {num_params:,}")
     config_dict["num_params"] = num_params
     size = train_config.net_name.split("-")[-1]
-    wandb.init(project="GeoGuessrCoordinatesV2", name=train_config.run_name, config=config_dict, tags=[size])
+    wandb.init(
+        project="GeoGuessrCoordinatesV2",
+        name=train_config.run_name,
+        config=config_dict,
+        tags=[size],
+        settings=wandb.Settings(x_disable_stats=True),
+    )
     wandb.watch(net, log="all", log_freq=train_config.log_interval * 10) # type: ignore # Log grads & params
 
     print("Training on device:", device)
