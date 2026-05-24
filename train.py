@@ -79,7 +79,7 @@ def loss_fn(pred, target):
 def evaluate(net, loader, s2_loss_weight, load_balance_loss_weight, epoch: int|str):
     val_metrics_sums = defaultdict(float)
     total_samples = 0
-    all_distances = []
+    all_distances_tensors = []
 
     net.eval()
     with torch.no_grad():
@@ -110,7 +110,8 @@ def evaluate(net, loader, s2_loss_weight, load_balance_loss_weight, epoch: int|s
             for key, value in load_metrics.items():
                 val_metrics_sums[key] += value.item() * bs
 
-            all_distances.extend(batch_metrics["distances_raw"].cpu().tolist())
+            all_distances_tensors.append(batch_metrics["distances_raw"].detach().cpu())
+
             for key, value_tensor in batch_metrics.items():
                 if key != "distances_raw":
                     val_metrics_sums[key] += value_tensor.item() * bs
@@ -124,6 +125,11 @@ def evaluate(net, loader, s2_loss_weight, load_balance_loss_weight, epoch: int|s
     if total_samples > 0:
         for key, total_sum in val_metrics_sums.items():
             final_metrics_avg[key] = total_sum / total_samples
+
+    if all_distances_tensors:
+        all_distances = torch.cat(all_distances_tensors).tolist()
+    else:
+        all_distances = []
 
     return final_metrics_avg, all_distances
 
@@ -208,6 +214,7 @@ def train(
             X, y_coords, y_s2 = X.to(device), y_coords.to(device), y_s2.to(device)
             bs = X.shape[0]
 
+            optimizer.zero_grad()
             out, s2_logits, load_metrics = net(X)  # Bx3
             for key, value in load_metrics.items():
                 running_metrics_sums[key] += value.item()
@@ -246,7 +253,6 @@ def train(
                 total_grad_norm_after += grad_norm_after.item()
 
             optimizer.step()
-            optimizer.zero_grad()
             global_step += bs
 
             if (i+1) % config.log_interval == 0:
@@ -432,7 +438,7 @@ if __name__ == "__main__":
         tags=[size],
         settings=wandb.Settings(x_disable_stats=True),
     )
-    wandb.watch(net, log="all", log_freq=train_config.log_interval * 10) # type: ignore # Log grads & params
+    # wandb.watch(net, log="all", log_freq=train_config.log_interval * 10) # type: ignore # Log grads & params
 
     print("Training on device:", device)
     test_metrics, all_test_distances = train(
