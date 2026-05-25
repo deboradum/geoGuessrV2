@@ -1,13 +1,15 @@
 import os
 import torch
 import random
+import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 import s2cell  # type: ignore[import-untyped]
 
 from PIL import Image
 from typing import Tuple
-from torchvision import transforms  # type: ignore[import-untyped]
+import albumentations as A
 from collections import defaultdict
+from albumentations.pytorch import ToTensorV2
 from torch.utils.data import Dataset, DataLoader, Sampler
 
 
@@ -24,10 +26,13 @@ class GeoGuessrDataset(Dataset):
         row = self.data.iloc[idx]
         image_path = os.path.join(self.root_dir, row["path"])
         with Image.open(image_path) as image:
-            image = image.convert("RGB")
+            image_np = np.array(image.convert("RGB"))
 
         if self.transform:
-            image = self.transform(image)
+            augmented = self.transform(image=image_np)
+            image = augmented["image"]
+        else:
+            image = torch.from_numpy(image_np).permute(2, 0, 1).float() / 255.0
 
         lat, lng = float(row["lat"]), float(row["lng"])
         target = torch.tensor([lng, lat], dtype=torch.float32)
@@ -77,10 +82,13 @@ class GeoGuessrEmbeddingDataset(Dataset):
         row = self.data.iloc[idx]
         image_path = os.path.join(self.root_dir, row["path"])
         with Image.open(image_path) as image:
-            image = image.convert("RGB")
+            image_np = np.array(image.convert("RGB"))
 
         if self.transform:
-            image = self.transform(image)
+            augmented = self.transform(image=image_np)
+            image = augmented["image"]
+        else:
+            image = torch.from_numpy(image_np).permute(2, 0, 1).float() / 255.0
 
         lat, lng = float(row["lat"]), float(row["lng"])
         coords = torch.tensor([lng, lat], dtype=torch.float32)
@@ -90,13 +98,13 @@ class GeoGuessrEmbeddingDataset(Dataset):
         return image, (coords, s2_label)
 
 def get_loaders_geoGuessr(batch_size: int, directory: str="geoGuessrDataset/") -> Tuple[DataLoader, DataLoader, DataLoader]:
-    transform = transforms.Compose(
+    transform = A.Compose(
         [
-            transforms.RandomCrop((448, 448)),
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            transforms.RandomHorizontalFlip(),
+            A.RandomCrop(height=448, width=448),
+            A.Resize(height=224, width=224),
+            A.HorizontalFlip(p=0.5),
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ToTensorV2(),
         ]
     )
 
@@ -168,13 +176,27 @@ class PKBatchSampler(Sampler):
 
 
 def get_loaders_geoGuessrEmbedding(directory: str="geoGuessrDataset/", s2_cell_level: int = 10) -> Tuple[DataLoader, DataLoader, DataLoader]:
-    transform = transforms.Compose(
+    train_transform = A.Compose(
         [
-            transforms.RandomCrop((448, 448)),
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            transforms.RandomHorizontalFlip(),
+            A.HorizontalFlip(p=0.5),
+            A.RandomCrop(height=448, width=448),
+            A.Resize(height=224, width=224),
+
+            A.RandomBrightnessContrast(p=0.5),
+            A.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.15, hue=0.03, p=0.5),
+
+            A.CoarseDropout(max_holes=8, max_height=32, max_width=32, min_holes=1, p=0.5),
+
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ToTensorV2(),
+        ]
+    )
+
+    val_transform = A.Compose(
+        [
+            A.Resize(height=224, width=224),
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ToTensorV2(),
         ]
     )
 
@@ -204,9 +226,9 @@ def get_loaders_geoGuessrEmbedding(directory: str="geoGuessrDataset/", s2_cell_l
     print(f"Global unique S2 classes mapped: {len(global_cell_to_label)}")
 
     datasets = {
-        "train": GeoGuessrEmbeddingDataset(os.path.join(directory, "train.csv"), directory, s2_cell_level, transform, label_map=global_cell_to_label),
-        "val": GeoGuessrEmbeddingDataset(os.path.join(directory, "val.csv"), directory, s2_cell_level, transform, label_map=global_cell_to_label),
-        "test": GeoGuessrEmbeddingDataset(os.path.join(directory, "test.csv"), directory, s2_cell_level, transform, label_map=global_cell_to_label),
+        "train": GeoGuessrEmbeddingDataset(os.path.join(directory, "train.csv"), directory, s2_cell_level, train_transform, label_map=global_cell_to_label),
+        "val": GeoGuessrEmbeddingDataset(os.path.join(directory, "val.csv"), directory, s2_cell_level, val_transform, label_map=global_cell_to_label),
+        "test": GeoGuessrEmbeddingDataset(os.path.join(directory, "test.csv"), directory, s2_cell_level, val_transform, label_map=global_cell_to_label),
     }
 
     loaders = {}
