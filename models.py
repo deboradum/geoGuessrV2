@@ -99,14 +99,17 @@ class GeoGuessrModel(nn.Module):
 
         x_combined = torch.cat([x, s2_features.detach()], dim=-1)
 
-        experts_weights, experts_indices, all_expert_probs = self.router(x_combined)  # (B, k), (B, k)
+        experts_weights, experts_indices, all_expert_probs = self.router(x_combined)  # (B, k), (B, k), (B, num_experts)
+
         P = all_expert_probs.mean(dim=0)
+        variance = torch.var(P, unbiased=False)
+        mean_prob = 1.0 / self.num_experts
+        load_balancing_loss = variance / (mean_prob ** 2)
 
-        load_balancing_loss = torch.tensor(0, dtype=torch.float32, device=self.device)
         out = torch.zeros(bs, 3, dtype=x_combined.dtype, device=self.device)  # (B, 3)
-
         expert_load = torch.zeros(self.num_experts, dtype=torch.float32, device=self.device)
         total_assignments = bs * self.router.k
+
         for i, expert in enumerate(self.experts):
             (batch_idx, top_k_idx) = torch.where(experts_indices == i)
             num_tokens_routed_to_i = batch_idx.numel()
@@ -118,9 +121,7 @@ class GeoGuessrModel(nn.Module):
             weighted_out = expert_out * weights.unsqueeze(-1)  # (len(batch_idx), 3)
             out.index_add_(0, batch_idx, weighted_out)
 
-            f_i = num_tokens_routed_to_i / total_assignments  # (1,)
-            load_balancing_loss += f_i * P[i]
-            expert_load[i] = f_i
+            expert_load[i] = num_tokens_routed_to_i / total_assignments
 
         # Normalize to unit sphere
         out = F.normalize(out, p=2, dim=1, eps=1e-8)
@@ -130,7 +131,7 @@ class GeoGuessrModel(nn.Module):
         router_prob_entropy = -torch.sum(P * torch.log(P + 1e-9))
 
         load_metrics = {
-            "load_balancing_loss": load_balancing_loss * self.num_experts,
+            "load_balancing_loss": load_balancing_loss,
             "expert_load_cv": cv_load,
             "dead_experts": dead_experts,
             "router_prob_entropy": router_prob_entropy,
