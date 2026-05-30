@@ -28,7 +28,7 @@ device = torch.device(
 # Haversine distance loss and geoguessr score
 def loss_fn(pred, target):
     pred_x, pred_y, pred_z = pred[:, 0], pred[:, 1], pred[:, 2]
-    pred_lon_deg, pred_lat_deg = cartesian_to_gcs_tensor(pred_x, pred_y, pred_z)
+    pred_lat_deg, pred_lon_deg = cartesian_to_gcs_tensor(pred_x, pred_y, pred_z)
 
     true_lon_deg, true_lat_deg = target[:, 0], target[:, 1]
     true_x, true_y, true_z = gcs_to_cartesian_tensor(true_lat_deg, true_lon_deg)
