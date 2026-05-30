@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from collections import defaultdict
 
 from models import get_net
-from dataset import get_loaders_geoGuessrEmbedding, get_loaders_geoGuessr
+from dataset import get_loaders
 from utils import TrainConfig, load_config, get_optimizer, gcs_to_cartesian_tensor, cartesian_to_gcs_tensor, save_predictions
 
 EARTH_RADIUS = 6371000  # meters
@@ -415,7 +415,7 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-    train_loader, eval_loader, test_loader = get_loaders_geoGuessrEmbedding(
+    train_loader, eval_loader, test_loader = get_loaders(
         directory=train_config.dataset_dir, s2_cell_level=train_config.s2_cell_level
     )
 
