@@ -3,7 +3,7 @@ import wandb
 
 from models import get_net
 from train import get_args, train
-from dataset import get_loaders_geoGuessrEmbedding
+from dataset import get_loaders
 from utils import load_config, get_optimizer
 
 
@@ -51,7 +51,7 @@ if __name__ == "__main__":
 
         config_dict = {**vars(train_config)}
 
-        train_loader, eval_loader, test_loader = get_loaders_geoGuessrEmbedding(
+        train_loader, eval_loader, test_loader = get_loaders(
             directory=train_config.dataset_dir, s2_cell_level=train_config.s2_cell_level,
         )
 
@@ -114,5 +114,6 @@ if __name__ == "__main__":
         )
         wandb.finish()
 
-    sweep_id = wandb.sweep(sweep_config, project="GeoGuessrCoordinates")
-    wandb.agent(sweep_id, function=sweep_train)
+    # sweep_id = wandb.sweep(sweep_config, project="GeoGuessrCoordinates")
+    sweep_id = "xlelcbc7"
+    wandb.agent(sweep_id, function=sweep_train, project="GeoGuessrCoordinates")
