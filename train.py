@@ -76,7 +76,7 @@ def loss_fn(pred, target):
     }
 
 
-def evaluate(net, loader, s2_loss_weight, load_balance_loss_weight, epoch: int|str):
+def evaluate(net, loader, dist_loss_weight, s2_loss_weight, load_balance_loss_weight, epoch: int|str):
     val_metrics_sums = defaultdict(float)
     total_samples = 0
     all_distances_tensors = []
@@ -100,10 +100,11 @@ def evaluate(net, loader, s2_loss_weight, load_balance_loss_weight, epoch: int|s
 
             aux_loss = load_metrics["load_balancing_loss"]
 
+            gamma = dist_loss_weight
             alpha = s2_loss_weight
             beta = load_balance_loss_weight
 
-            total_loss = dist_loss + (alpha * s2_loss) + (beta * aux_loss)
+            total_loss = (gamma * dist_loss) + (alpha * s2_loss) + (beta * aux_loss)
 
             batch_metrics["total_loss"] = total_loss
 
@@ -150,7 +151,7 @@ def train(
     # Evaluate
     start = time.perf_counter()
     net.eval()
-    val_metrics, all_eval_distances = evaluate(net, eval_loader, config.s2_loss_weight, config.load_balance_loss_weight, epoch="initial")
+    val_metrics, all_eval_distances = evaluate(net, eval_loader, config.dist_loss_weight, config.s2_loss_weight, config.load_balance_loss_weight, epoch="initial")
     net.train()
     taken = time.perf_counter() - start
     wandb.log(
@@ -231,11 +232,15 @@ def train(
 
             aux_loss = load_metrics["load_balancing_loss"]
 
+            gamma = config.dist_loss_weight
             alpha = config.s2_loss_weight
             beta = config.load_balance_loss_weight
 
+            scaled_dist_loss = gamma * dist_loss
+            scaled_s2_loss = alpha * s2_loss
+            scaled_aux_loss = beta * aux_loss
             # Optimize against distance, s2 cross entropy and load balancing loss.
-            total_loss = dist_loss + (alpha * s2_loss) + (beta * aux_loss)
+            total_loss = scaled_dist_loss + scaled_s2_loss + scaled_aux_loss
             total_loss.backward()
 
             running_metrics_sums["total_loss"] += total_loss.item()
@@ -272,7 +277,9 @@ def train(
                         "train/total_loss": train_metrics.get("total_loss", -1),
                         "train/mse_loss": train_metrics.get("mse_loss", -1),
                         "train/load_balancing_loss": train_metrics.get("load_balancing_loss", -1),
+                        "train/scaled_load_balancing_loss": scaled_aux_loss,
                         "train/s2_loss": train_metrics.get("s2_loss", -1),
+                        "train/scaled_s2_loss": scaled_s2_loss,
                         "train/s2_accuracy": train_metrics.get("s2_accuracy", -1),
                         "train/expert_load_cv": train_metrics.get("expert_load_cv", -1),
                         "train/dead_experts": train_metrics.get("dead_experts", -1),
@@ -305,9 +312,9 @@ def train(
                 )
                 print(
                     f"Epoch {e}, step {i} (Global {global_step}), Time: {taken:.2f}s ({ips:.2f} i/s)\n"
-                    f"  dist loss:   {train_metrics.get('mse_loss', 0.0):.2f}\n"
-                    f"  aux loss:    {train_metrics.get('load_balancing_loss', 0.0):.2f}\n"
-                    f"  S2 loss:     {train_metrics.get('s2_loss', 0.0):.2f}\n"
+                    f"  dist loss:   {train_metrics.get('distance_rad_avg', 0.0):.2f} ({train_metrics.get('distance_rad_avg', 0.0) * config.dist_loss_weight:.2f})\n"
+                    f"  aux loss:    {train_metrics.get('load_balancing_loss', 0.0):.2f} ({train_metrics.get('load_balancing_loss', 0.0) * config.load_balance_loss_weight:.2f})\n"
+                    f"  S2 loss:     {train_metrics.get('s2_loss', 0.0):.2f} ({train_metrics.get('s2_loss', 0.0) * config.s2_loss_weight:.2f})\n"
                     f"  S2 acc:      {train_metrics.get('s2_accuracy', 0.0):.3f}\n"
                     f"  total loss:  {train_metrics.get('total_loss', 0.0):.2f}\n"
                     f"  Score:       {train_metrics.get('score_avg', 0.0):,.2f} ± {train_metrics.get('score_std', 0.0):,.2f}\n"
@@ -324,7 +331,7 @@ def train(
         # Evaluate
         start = time.perf_counter()
         net.eval()
-        val_metrics, all_eval_distances = evaluate(net, eval_loader, config.s2_loss_weight, config.load_balance_loss_weight, epoch=e)
+        val_metrics, all_eval_distances = evaluate(net, eval_loader, config.dist_loss_weight, config.s2_loss_weight, config.load_balance_loss_weight, epoch=e)
         net.train()
         taken = time.perf_counter() - start
         wandb.log(
@@ -392,7 +399,7 @@ def train(
     net.load_state_dict(best_state_dict)
 
     net.eval()
-    return evaluate(net, test_loader, config.s2_loss_weight, config.load_balance_loss_weight, epoch="test")
+    return evaluate(net, test_loader, config.dist_loss_weight, config.s2_loss_weight, config.load_balance_loss_weight, epoch="test")
 
 
 def get_args():
