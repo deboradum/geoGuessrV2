@@ -37,11 +37,12 @@ def loss_fn(pred, target):
 
     mse_loss = torch.nn.MSELoss()(pred, target_cartesian)
 
-    chordal_dist = torch.norm(pred - target_cartesian, p=2, dim=1)
-    clamped_ratio = torch.clamp(chordal_dist / 2.0, min=0.0, max=1.0 - 1e-7)
+    pred_normalized = F.normalize(pred, p=2, dim=1, eps=1e-8)
+
+    chordal_dist = torch.norm(pred_normalized - target_cartesian, p=2, dim=1)
+    clamped_ratio = torch.clamp(chordal_dist / 2.0, min=0.0, max=1.0 - 1e-5)
 
     c = 2.0 * torch.asin(clamped_ratio)
-
 
     with torch.no_grad():
         distance = EARTH_RADIUS * c / 1000.0  # km
@@ -389,6 +390,7 @@ def train(
         if val_metrics["distance_avg"] < best_distance:
             best_distance = val_metrics["distance_avg"]
             best_state_dict = copy.deepcopy(net.state_dict())
+            early_stop_counter = 0
         else:
             early_stop_counter += 1
             if early_stop_counter > config.early_stop:
@@ -397,6 +399,8 @@ def train(
 
     # Load best model before test evaluation
     net.load_state_dict(best_state_dict)
+
+    # torch.save(best_state_dict, f"best_model_{config.run_name}.pth")
 
     net.eval()
     return evaluate(net, test_loader, config.dist_loss_weight, config.s2_loss_weight, config.load_balance_loss_weight, epoch="test")
