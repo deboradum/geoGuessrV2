@@ -123,11 +123,28 @@ def get_loaders(directory: str="geoGuessrDataset/", s2_cell_level: int = 10) -> 
     train_transform = A.Compose(
         [
             A.RandomCrop(height=900, width=900),
+
+            A.Affine(shift_limit=0.05, scale_limit=0.05, rotate_limit=10, p=0.3),
+
             A.Resize(height=256, width=256),
 
+            # Lighting changes
             A.RandomBrightnessContrast(p=0.5),
             A.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.15, hue=0.03, p=0.5),
-            A.CoarseDropout(max_holes=5, max_height=32, max_width=32, min_holes=1, p=0.5),
+            A.RandomShadow(p=0.2),
+
+            # Google Street View camera artifacts
+            A.ImageCompression(quality_range=(60, 100), p=0.3),
+            A.ISONoise(p=0.2),
+            A.MotionBlur(blur_limit=3, p=0.2),
+
+            # Occlusion (simulating passing cars, leaves, etc)
+            A.CoarseDropout(
+                num_holes_range=(1, 5),
+                hole_height_range=(1, 32),
+                hole_width_range=(1, 32),
+                p=0.5
+            ),
 
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ToTensorV2(),
