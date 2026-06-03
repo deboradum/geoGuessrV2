@@ -122,7 +122,6 @@ class PKBatchSampler(Sampler):
 def get_loaders(directory: str="geoGuessrDataset/", s2_cell_level: int = 10) -> Tuple[DataLoader, DataLoader, DataLoader]:
     train_transform = A.Compose(
         [
-            A.HorizontalFlip(p=0.5),
             A.RandomCrop(height=900, width=900),
             A.Resize(height=256, width=256),
 
