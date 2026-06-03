@@ -39,6 +39,7 @@ class CartesianExpert(nn.Module):
             nn.Linear(input_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
             nn.GELU(),
+            nn.Dropout(p=0.3),
             nn.Linear(hidden_dim, 3),  # (x, y, z)
         )
 
@@ -69,6 +70,7 @@ class GeoGuessrModel(nn.Module):
             nn.Linear(num_features, hidden_size),
             nn.BatchNorm1d(hidden_size),
             nn.GELU(),
+            nn.Dropout(p=0.3),
         )
         self.s2_projection_layer = nn.Linear(hidden_size, num_s2_classes)
 
