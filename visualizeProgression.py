@@ -14,7 +14,7 @@ def find_all_image_paths(directory: str, name: str):
 
     return found_paths
 
-def visualize(paths: List[str], save: bool):
+def visualize(paths: List[str], save: bool, base_name: str = "visualizations_grid"):
     if not paths:
         print("No images found to visualize.")
         return
@@ -40,7 +40,6 @@ def visualize(paths: List[str], save: bool):
 
     other_paths.sort(key=sort_key)
 
-    # Calculate optimal grid size
     n_images = len(paths)
     cols = math.ceil(math.sqrt(n_images))
     rows = math.ceil(n_images / cols)
@@ -84,18 +83,37 @@ def visualize(paths: List[str], save: bool):
     plt.tight_layout()
 
     if save:
-        save_path = "visualizations_grid.png"
+        save_path = f"{base_name}.png"
         plt.savefig(save_path, bbox_inches='tight')
         print(f"Visualization saved to {save_path}")
+        plt.close(fig)
     else:
         plt.show()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dir", type=str, help="Path to the visualizations directory", required=True)
-    parser.add_argument("--name", type=str, help="Image name to visualize", required=True)
     parser.add_argument("--save", action="store_true", help="Save visualization image")
+
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--name", type=str, help="Image name to visualize")
+    group.add_argument("--all", action="store_true", help="Iterate through all images in the initial directory")
+
     args = parser.parse_args()
 
-    paths = find_all_image_paths(args.dir, args.name)
-    visualize(paths, args.save)
+    if args.all:
+        initial_dir = os.path.join(args.dir, "initial")
+        if not os.path.exists(initial_dir):
+            print(f"Error: 'initial' directory not found in {args.dir}")
+            exit(1)
+
+        for filename in os.listdir(initial_dir):
+            filepath = os.path.join(initial_dir, filename)
+            if os.path.isfile(filepath):
+                print(f"Processing: {filename}")
+                paths = find_all_image_paths(args.dir, filename)
+                name_without_ext = os.path.splitext(filename)[0]
+                visualize(paths, args.save, base_name=f"visualizations_grid_{name_without_ext}")
+    else:
+        paths = find_all_image_paths(args.dir, args.name)
+        visualize(paths, args.save)
