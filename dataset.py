@@ -153,7 +153,8 @@ def get_loaders(directory: str="geoGuessrDataset/", s2_cell_level: int = 10) -> 
 
     val_transform = A.Compose(
         [
-            A.Resize(height=224, width=224),
+            A.CenterCrop(height=900, width=900),
+            A.Resize(height=256, width=256),
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ToTensorV2(),
         ]
