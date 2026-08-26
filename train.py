@@ -77,7 +77,7 @@ def loss_fn(pred, target):
     }
 
 
-def evaluate(net, loader, dist_loss_weight, s2_loss_weight, load_balance_loss_weight, epoch: int|str):
+def evaluate(net, loader, dist_loss_weight, s2_loss_weight, load_balance_loss_weight, epoch: int|str, run_name: str, num_viz_batches: int):
     val_metrics_sums = defaultdict(float)
     total_samples = 0
     all_distances_tensors = []
@@ -120,8 +120,8 @@ def evaluate(net, loader, dist_loss_weight, s2_loss_weight, load_balance_loss_we
 
             total_samples += bs
 
-            if i < 2:
-                save_predictions(X, out, y_coords, distances=batch_metrics["distances_raw"], output_dir=f"visualizations/{epoch}/")
+            if i < num_viz_batches:
+                save_predictions(X, out, y_coords, distances=batch_metrics["distances_raw"], output_dir=f"visualizations_{run_name}/{epoch}/")
 
     final_metrics_avg = {}
     if total_samples > 0:
@@ -142,7 +142,8 @@ def train(
     optimizer: torch.optim.Optimizer,
     train_loader: torch.utils.data.DataLoader,
     eval_loader: torch.utils.data.DataLoader,
-    test_loader: torch.utils.data.DataLoader
+    test_loader: torch.utils.data.DataLoader,
+    viz_batches: int = 1
 ):
     best_distance = float('inf')
     best_state_dict = copy.deepcopy(net.state_dict())
@@ -152,7 +153,7 @@ def train(
     # Evaluate
     start = time.perf_counter()
     net.eval()
-    val_metrics, all_eval_distances = evaluate(net, eval_loader, config.dist_loss_weight, config.s2_loss_weight, config.load_balance_loss_weight, epoch="initial")
+    val_metrics, all_eval_distances = evaluate(net, eval_loader, config.dist_loss_weight, config.s2_loss_weight, config.load_balance_loss_weight, epoch="initial", run_name=config.run_name, num_viz_batches=viz_batches)
     net.train()
     taken = time.perf_counter() - start
     wandb.log(
@@ -332,7 +333,8 @@ def train(
         # Evaluate
         start = time.perf_counter()
         net.eval()
-        val_metrics, all_eval_distances = evaluate(net, eval_loader, config.dist_loss_weight, config.s2_loss_weight, config.load_balance_loss_weight, epoch=e)
+
+        val_metrics, all_eval_distances = evaluate(net, eval_loader, config.dist_loss_weight, config.s2_loss_weight, config.load_balance_loss_weight, epoch=e, run_name=config.run_name, num_viz_batches=viz_batches)
         net.train()
         taken = time.perf_counter() - start
         wandb.log(
@@ -403,7 +405,7 @@ def train(
     # torch.save(best_state_dict, f"best_model_{config.run_name}.pth")
 
     net.eval()
-    return evaluate(net, test_loader, config.dist_loss_weight, config.s2_loss_weight, config.load_balance_loss_weight, epoch="test")
+    return evaluate(net, test_loader, config.dist_loss_weight, config.s2_loss_weight, config.load_balance_loss_weight, epoch="test", run_name=config.run_name, num_viz_batches=max(1, viz_batches))
 
 
 def get_args():
@@ -413,6 +415,9 @@ def get_args():
     )
     parser.add_argument(
         "--compile", action="store_true", help="Compile model before training"
+    )
+    parser.add_argument(
+        "--viz_batches", type=int, default=1, help="Amount of batches to save visualizations for"
     )
     return parser.parse_args()
 
@@ -458,7 +463,8 @@ if __name__ == "__main__":
         optimizer=optimizer,
         train_loader=train_loader,
         eval_loader=eval_loader,
-        test_loader=test_loader
+        test_loader=test_loader,
+        viz_batches=args.viz_batches
     )
     wandb.log(
         {
