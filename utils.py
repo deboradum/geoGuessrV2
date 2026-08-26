@@ -190,3 +190,75 @@ def save_predictions(images, pred, target, distances, output_dir="visualizations
 
         plt.savefig(filepath, bbox_inches='tight', dpi=150)
         plt.close(fig)
+
+
+def save_expert_heatmaps(predictions, routing_probs, distances, output_dir):
+    """
+    Creates an aggregated plot comprising individual geographical heatmaps
+    for each expert based on what they predicted during evaluation.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    pred_x, pred_y, pred_z = predictions[:, 0], predictions[:, 1], predictions[:, 2]
+    pred_lat_deg, pred_lon_deg = cartesian_to_gcs_tensor(pred_x, pred_y, pred_z)
+
+    pred_lat = pred_lat_deg.numpy()
+    pred_lon = pred_lon_deg.numpy()
+    distances_np = distances.numpy()
+
+    if routing_probs.dtype in [torch.int32, torch.int64]:
+        primary_expert = routing_probs.numpy()
+    else:
+        primary_expert = routing_probs.argmax(dim=-1).numpy()
+
+    if primary_expert.ndim == 2:
+        primary_expert = primary_expert[:, 0]
+
+    num_experts = routing_probs.shape[-1] if routing_probs.ndim == 2 else (primary_expert.max() + 1)
+    num_experts = max(int(primary_expert.max()) + 1, num_experts)
+
+    cols = 2
+    rows = math.ceil(num_experts / cols)
+
+    fig, axes = plt.subplots(rows, cols, figsize=(15, 5 * rows), subplot_kw={'projection': ccrs.PlateCarree()})
+
+    if num_experts == 1:
+        axes = np.array([axes])
+    axes = axes.flatten()
+
+    for i in range(len(axes)):
+        ax = axes[i]
+        if i < num_experts:
+            ax.add_feature(cfeature.LAND, facecolor='lightgray')
+            ax.add_feature(cfeature.OCEAN, facecolor='lightblue')
+            ax.add_feature(cfeature.COASTLINE, linewidth=0.5)
+            ax.set_global()
+
+            expert_mask = (primary_expert == i)
+            count = expert_mask.sum()
+            total_preds = len(primary_expert)
+            fraction = count / total_preds if total_preds > 0 else 0
+
+            if count > 0:
+                # Use hexbin for efficient and clear visualization of point densities
+                hb = ax.hexbin(
+                    pred_lon[expert_mask],
+                    pred_lat[expert_mask],
+                    gridsize=60,
+                    cmap='YlOrRd',
+                    transform=ccrs.PlateCarree(),
+                    mincnt=1
+                )
+                plt.colorbar(hb, ax=ax, orientation='horizontal', pad=0.05, aspect=40, label='Prediction Density')
+
+                avg_dist = distances_np[expert_mask].mean()
+                ax.set_title(f"Expert {i} Primary Predictions (Count: {count}, {fraction:.1%}, Avg Error: {avg_dist:,.0f} km)")
+            else:
+                ax.set_title(f"Expert {i} Primary Predictions (Count: {count}, {fraction:.1%})")
+        else:
+            ax.axis('off')
+
+    plt.tight_layout()
+    filepath = os.path.join(output_dir, "expert_heatmaps.png")
+    plt.savefig(filepath, bbox_inches='tight', dpi=150)
+    plt.close(fig)

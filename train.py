@@ -11,7 +11,7 @@ from collections import defaultdict
 
 from models import get_net
 from dataset import get_loaders
-from utils import TrainConfig, load_config, get_optimizer, gcs_to_cartesian_tensor, cartesian_to_gcs_tensor, save_predictions
+from utils import TrainConfig, load_config, get_optimizer, gcs_to_cartesian_tensor, cartesian_to_gcs_tensor, save_predictions, save_expert_heatmaps
 
 EARTH_RADIUS = 6371000  # meters
 
@@ -82,6 +82,9 @@ def evaluate(net, loader, dist_loss_weight, s2_loss_weight, load_balance_loss_we
     total_samples = 0
     all_distances_tensors = []
 
+    all_preds = []
+    all_routing_probs = []
+
     net.eval()
     with torch.no_grad():
         for i, (X, (y_coords, y_s2)) in enumerate(loader):
@@ -89,6 +92,21 @@ def evaluate(net, loader, dist_loss_weight, s2_loss_weight, load_balance_loss_we
             bs = X.size(0)
 
             out, s2_logits, load_metrics = net(X)
+
+            all_preds.append(out.detach().cpu())
+
+            # Efficiently extract router probabilities to later generate expert heatmaps
+            probs = load_metrics.get("routing_probs", load_metrics.get("routing_weights", None))
+            if probs is None:
+                # Fallback: Find tensor shaped (Batch, Experts) in the metrics
+                for k, v in load_metrics.items():
+                    if isinstance(v, torch.Tensor) and v.ndim >= 2 and v.shape[0] == bs and v.shape[-1] < 128:
+                        probs = v
+                        break
+
+            if probs is not None:
+                all_routing_probs.append(probs.detach().cpu())
+
             batch_metrics = loss_fn(out, y_coords)
             dist_loss = batch_metrics["distance_rad_avg"]
 
@@ -110,18 +128,27 @@ def evaluate(net, loader, dist_loss_weight, s2_loss_weight, load_balance_loss_we
             batch_metrics["total_loss"] = total_loss
 
             for key, value in load_metrics.items():
-                val_metrics_sums[key] += value.item() * bs
+                if isinstance(value, torch.Tensor) and value.numel() == 1:
+                    val_metrics_sums[key] += value.item() * bs
 
             all_distances_tensors.append(batch_metrics["distances_raw"].detach().cpu())
 
             for key, value_tensor in batch_metrics.items():
-                if key != "distances_raw":
+                if key != "distances_raw" :
                     val_metrics_sums[key] += value_tensor.item() * bs
 
             total_samples += bs
 
             if i < num_viz_batches:
                 save_predictions(X, out, y_coords, distances=batch_metrics["distances_raw"], output_dir=f"visualizations_{run_name}/{epoch}/")
+
+    # Generate aggregated expert heatmaps dynamically at the end of the evaluation phase
+    if all_routing_probs and len(all_routing_probs) == len(all_preds):
+        full_preds = torch.cat(all_preds, dim=0)
+        full_probs = torch.cat(all_routing_probs, dim=0)
+        full_distances = torch.cat(all_distances_tensors, dim=0)
+        out_dir = f"visualizations_{run_name}/{epoch}/"
+        save_expert_heatmaps(full_preds, full_probs, full_distances, out_dir)
 
     final_metrics_avg = {}
     if total_samples > 0:
@@ -220,7 +247,8 @@ def train(
             optimizer.zero_grad()
             out, s2_logits, load_metrics = net(X)  # Bx3
             for key, value in load_metrics.items():
-                running_metrics_sums[key] += value.item()
+                if isinstance(value, torch.Tensor) and value.numel() == 1:
+                    running_metrics_sums[key] += value.item()
 
             batch_metrics = loss_fn(out, y_coords)
             dist_loss = batch_metrics["distance_rad_avg"]

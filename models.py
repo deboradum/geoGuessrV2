@@ -137,6 +137,7 @@ class GeoGuessrModel(nn.Module):
             "expert_load_cv": cv_load,
             "dead_experts": dead_experts,
             "router_prob_entropy": router_prob_entropy,
+            "routing_probs": all_expert_probs,
         }
 
         return out, s2_logits, load_metrics,
