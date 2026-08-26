@@ -149,16 +149,23 @@ def save_predictions(images, pred, target, distances, output_dir="visualizations
         ax_img.axis('off')
         ax_img.set_title("Input Image")
 
-        # World Map
+        # World Map (Cleaner Layout)
         ax_map = fig.add_subplot(1, 2, 2, projection=ccrs.PlateCarree())
-        ax_map.add_feature(cfeature.COASTLINE)
-        ax_map.add_feature(cfeature.BORDERS, linestyle=':')
+
+        # Add colored base layers for better contrast
+        ax_map.add_feature(cfeature.LAND, facecolor='lightgray')
+        ax_map.add_feature(cfeature.OCEAN, facecolor='lightblue')
+        ax_map.add_feature(cfeature.COASTLINE, linewidth=0.5)
+        ax_map.add_feature(cfeature.BORDERS, linestyle=':', linewidth=0.5)
         ax_map.set_global()
+
+        # Connect True and Pred with a geodetic (curved great-circle) line
+        ax_map.plot([t_lon, p_lon], [t_lat, p_lat], color='black', linestyle='--', linewidth=1, transform=ccrs.Geodetic())
 
         # True coordinates (Blue)
         ax_map.plot(
             t_lon, t_lat,
-            color='blue', marker='o', markersize=8,
+            color='blue', marker='o', markersize=6,
             transform=ccrs.PlateCarree(),
             label=f'True: {t_lat:.4f}°, {t_lon:.4f}°'
         )
@@ -166,7 +173,7 @@ def save_predictions(images, pred, target, distances, output_dir="visualizations
         # Predicted coordinates (Red)
         ax_map.plot(
             p_lon, p_lat,
-            color='red', marker='x', markersize=8, markeredgewidth=2,
+            color='red', marker='x', markersize=6, markeredgewidth=2,
             transform=ccrs.PlateCarree(),
             label=f'Pred: {p_lat:.4f}°, {p_lon:.4f}°'
         )
