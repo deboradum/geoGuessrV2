@@ -1,4 +1,5 @@
 import os
+import cv2
 import math
 import yaml  # type: ignore[import-untyped]
 import torch
@@ -6,6 +7,7 @@ import time
 import hashlib
 import numpy as np
 import cartopy.crs as ccrs
+import matplotlib.cm as cm
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import cartopy.feature as cfeature
@@ -262,3 +264,95 @@ def save_expert_heatmaps(predictions, routing_probs, distances, output_dir):
     filepath = os.path.join(output_dir, "expert_heatmaps.png")
     plt.savefig(filepath, bbox_inches='tight', dpi=150)
     plt.close(fig)
+
+class ViTAttentionHook:
+    """Elegantly hooks into the last attention layer of standard ViTs (timm/torchvision)."""
+    def __init__(self, model):
+        self.attention = None
+        self.hook_handle = None
+
+        # Dynamically find the last attention dropout layer (works for most ViT implementations)
+        target_module = None
+        for name, module in model.named_modules():
+            if 'attn_drop' in name or ('self_attention' in name and 'dropout' in name):
+                target_module = module
+
+        if target_module is not None:
+            self.hook_handle = target_module.register_forward_hook(self._hook)
+        else:
+            print("Warning: Could not auto-detect ViT attention layer for visualization.")
+
+    def _hook(self, module, input, output):
+        # The input to the attention dropout layer is the post-softmax attention matrix
+        # Shape: (Batch, Heads, SeqLen, SeqLen)
+        self.attention = input[0].detach()
+
+    def remove(self):
+        if self.hook_handle:
+            self.hook_handle.remove()
+
+def save_attention_maps(images, model, output_dir, run_name):
+    """Generates and saves ViT attention heatmaps using a forward hook."""
+    os.makedirs(output_dir, exist_ok=True)
+
+    # 1. Register Hook & Run Forward Pass
+    hook = ViTAttentionHook(model)
+    with torch.no_grad():
+        _ = model(images)
+
+    if hook.attention is None:
+        hook.remove()
+        return
+
+    # 2. Process Attention Map: (Batch, Heads, SeqLen, SeqLen)
+    attn = hook.attention
+
+    # Get attention from the [CLS] token (index 0) to all patch tokens (index 1:)
+    cls_attn = attn[:, :, 0, 1:]  # (Batch, Heads, Patches)
+    cls_attn = cls_attn.mean(dim=1)  # Average across heads -> (Batch, Patches)
+
+    # 3. Reshape and Upsample
+    B, num_patches = cls_attn.shape
+    grid_size = int(math.sqrt(num_patches))
+    cls_attn = cls_attn.view(B, 1, grid_size, grid_size)
+
+    # Normalize per image to [0, 1]
+    cls_attn = cls_attn - cls_attn.view(B, -1).min(dim=1, keepdim=True)[0].view(B, 1, 1, 1)
+    cls_attn = cls_attn / cls_attn.view(B, -1).max(dim=1, keepdim=True)[0].view(B, 1, 1, 1)
+
+    img_size = images.shape[-1]
+    attn_upsampled = F.interpolate(cls_attn, size=(img_size, img_size), mode='bicubic', align_corners=False)
+
+    # 4. Denormalize images for plotting
+    mean = torch.tensor([0.485, 0.456, 0.406], device=images.device).view(1, 3, 1, 1)
+    std = torch.tensor([0.229, 0.224, 0.225], device=images.device).view(1, 3, 1, 1)
+    images_denorm = images * std + mean
+    images_denorm = torch.clamp(images_denorm, 0, 1)
+
+    # 5. Plot and Save
+    for i in range(B):
+        img_np = images_denorm[i].permute(1, 2, 0).cpu().numpy()
+        heatmap = attn_upsampled[i, 0].cpu().numpy()
+
+        # Apply colormap to heatmap
+        heatmap_colored = cm.jet(heatmap)[:, :, :3]
+        overlay = (img_np * 0.5) + (heatmap_colored * 0.5)
+
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        axes[0].imshow(img_np)
+        axes[0].set_title("Original Image")
+        axes[0].axis('off')
+
+        axes[1].imshow(heatmap, cmap='jet')
+        axes[1].set_title("Attention Heatmap")
+        axes[1].axis('off')
+
+        axes[2].imshow(overlay)
+        axes[2].set_title("Overlay")
+        axes[2].axis('off')
+
+        filepath = os.path.join(output_dir, f"attention_map_{i}.png")
+        plt.savefig(filepath, bbox_inches='tight', dpi=150)
+        plt.close(fig)
+
+    hook.remove()

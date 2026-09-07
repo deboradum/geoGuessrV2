@@ -11,7 +11,7 @@ from collections import defaultdict
 
 from models import get_net
 from dataset import get_loaders
-from utils import TrainConfig, load_config, get_optimizer, gcs_to_cartesian_tensor, cartesian_to_gcs_tensor, save_predictions, save_expert_heatmaps
+from utils import TrainConfig, load_config, get_optimizer, gcs_to_cartesian_tensor, cartesian_to_gcs_tensor, save_predictions, save_expert_heatmaps, save_attention_maps
 
 EARTH_RADIUS = 6371000  # meters
 
@@ -141,6 +141,7 @@ def evaluate(net, loader, dist_loss_weight, s2_loss_weight, load_balance_loss_we
 
             if i < num_viz_batches:
                 save_predictions(X, out, y_coords, distances=batch_metrics["distances_raw"], output_dir=f"visualizations_{run_name}/{epoch}/")
+                save_attention_maps(X, net, output_dir=f"visualizations_{run_name}/{epoch}/", run_name=run_name)
 
     # Generate aggregated expert heatmaps dynamically at the end of the evaluation phase
     if all_routing_probs and len(all_routing_probs) == len(all_preds):
