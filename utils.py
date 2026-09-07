@@ -1,16 +1,22 @@
 import os
-import cv2
 import math
 import yaml  # type: ignore[import-untyped]
 import torch
 import time
 import hashlib
 import numpy as np
-import cartopy.crs as ccrs
-import matplotlib.cm as cm
+import seaborn as sns
 import torch.nn.functional as F
+from sklearn.metrics import confusion_matrix
+
+import matplotlib.cm as cm
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+
+import cartopy.crs as ccrs
+import shapely.geometry as sgeom
 import cartopy.feature as cfeature
+import cartopy.io.shapereader as shpreader
 
 from dataclasses import dataclass
 
@@ -295,7 +301,6 @@ def save_attention_maps(images, model, output_dir, run_name):
     """Generates and saves ViT attention heatmaps using a forward hook."""
     os.makedirs(output_dir, exist_ok=True)
 
-    # 1. Register Hook & Run Forward Pass
     hook = ViTAttentionHook(model)
     with torch.no_grad():
         _ = model(images)
@@ -304,14 +309,13 @@ def save_attention_maps(images, model, output_dir, run_name):
         hook.remove()
         return
 
-    # 2. Process Attention Map: (Batch, Heads, SeqLen, SeqLen)
     attn = hook.attention
 
     # Get attention from the [CLS] token (index 0) to all patch tokens (index 1:)
     cls_attn = attn[:, :, 0, 1:]  # (Batch, Heads, Patches)
     cls_attn = cls_attn.mean(dim=1)  # Average across heads -> (Batch, Patches)
 
-    # 3. Reshape and Upsample
+    # Reshape and Upsample
     B, num_patches = cls_attn.shape
     grid_size = int(math.sqrt(num_patches))
     cls_attn = cls_attn.view(B, 1, grid_size, grid_size)
@@ -323,13 +327,13 @@ def save_attention_maps(images, model, output_dir, run_name):
     img_size = images.shape[-1]
     attn_upsampled = F.interpolate(cls_attn, size=(img_size, img_size), mode='bicubic', align_corners=False)
 
-    # 4. Denormalize images for plotting
+    # Denormalize images for plotting
     mean = torch.tensor([0.485, 0.456, 0.406], device=images.device).view(1, 3, 1, 1)
     std = torch.tensor([0.229, 0.224, 0.225], device=images.device).view(1, 3, 1, 1)
     images_denorm = images * std + mean
     images_denorm = torch.clamp(images_denorm, 0, 1)
 
-    # 5. Plot and Save
+    # Plot and Save
     for i in range(B):
         img_np = images_denorm[i].permute(1, 2, 0).cpu().numpy()
         heatmap = attn_upsampled[i, 0].cpu().numpy()
@@ -356,3 +360,58 @@ def save_attention_maps(images, model, output_dir, run_name):
         plt.close(fig)
 
     hook.remove()
+
+def save_error_flow_map(predictions, targets, distances, output_dir, top_k=200):
+    """Draws great-circle arcs connecting the true and predicted locations for the worst errors."""
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Extract coordinates
+    pred_x, pred_y, pred_z = predictions[:, 0], predictions[:, 1], predictions[:, 2]
+    pred_lat_deg, pred_lon_deg = cartesian_to_gcs_tensor(pred_x, pred_y, pred_z)
+
+    true_lon_deg, true_lat_deg = targets[:, 0], targets[:, 1]
+
+    # Identify the worst errors (Top K largest distances)
+    distances_np = distances.numpy()
+    if len(distances_np) > top_k:
+        worst_indices = np.argsort(distances_np)[-top_k:]
+    else:
+        worst_indices = np.argsort(distances_np)
+
+    # Setup the Map
+    fig = plt.figure(figsize=(16, 9))
+    ax = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree())
+
+    ax.add_feature(cfeature.LAND, facecolor='#E0E0E0')
+    ax.add_feature(cfeature.OCEAN, facecolor='#B0D0E0')
+    ax.add_feature(cfeature.COASTLINE, linewidth=0.5)
+    ax.set_global()
+
+    # Setup colormap based on distance severity
+    norm = mcolors.Normalize(vmin=distances_np[worst_indices].min(), vmax=distances_np[worst_indices].max())
+    cmap = cm.Reds
+
+    # Plot the error arcs
+    for idx in worst_indices:
+        t_lon, t_lat = true_lon_deg[idx].item(), true_lat_deg[idx].item()
+        p_lon, p_lat = pred_lon_deg[idx].item(), pred_lat_deg[idx].item()
+        dist = distances_np[idx]
+
+        color = cmap(norm(dist))
+
+        # Geodetic transform creates the curved great-circle line
+        ax.plot([t_lon, p_lon], [t_lat, p_lat], transform=ccrs.Geodetic(), color=color, linewidth=1.5, alpha=0.7)
+
+        # Mark True (Green Dot) and Predicted (Black X)
+        ax.plot(t_lon, t_lat, transform=ccrs.PlateCarree(), marker='o', color='green', markersize=4, alpha=0.8)
+        ax.plot(p_lon, p_lat, transform=ccrs.PlateCarree(), marker='x', color='black', markersize=4, alpha=0.8)
+
+    sm = cm.ScalarMappable(cmap=cmap, norm=norm)
+    cbar = plt.colorbar(sm, ax=ax, orientation='horizontal', pad=0.05, aspect=50)
+    cbar.set_label('Error Distance (km)')
+
+    plt.title(f"Global Error Flow: Top {len(worst_indices)} Worst Confusions")
+
+    filepath = os.path.join(output_dir, "global_error_flow.png")
+    plt.savefig(filepath, bbox_inches='tight', dpi=200)
+    plt.close(fig)

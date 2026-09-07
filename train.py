@@ -11,7 +11,7 @@ from collections import defaultdict
 
 from models import get_net
 from dataset import get_loaders
-from utils import TrainConfig, load_config, get_optimizer, gcs_to_cartesian_tensor, cartesian_to_gcs_tensor, save_predictions, save_expert_heatmaps, save_attention_maps
+from utils import TrainConfig, load_config, get_optimizer, gcs_to_cartesian_tensor, cartesian_to_gcs_tensor, save_predictions, save_expert_heatmaps, save_attention_maps, save_error_flow_map
 
 EARTH_RADIUS = 6371000  # meters
 
@@ -83,6 +83,7 @@ def evaluate(net, loader, dist_loss_weight, s2_loss_weight, load_balance_loss_we
     all_distances_tensors = []
 
     all_preds = []
+    all_targets = []
     all_routing_probs = []
 
     net.eval()
@@ -94,6 +95,7 @@ def evaluate(net, loader, dist_loss_weight, s2_loss_weight, load_balance_loss_we
             out, s2_logits, load_metrics = net(X)
 
             all_preds.append(out.detach().cpu())
+            all_targets.append(y_coords.detach().cpu())
 
             # Efficiently extract router probabilities to later generate expert heatmaps
             probs = load_metrics.get("routing_probs", load_metrics.get("routing_weights", None))
@@ -146,10 +148,13 @@ def evaluate(net, loader, dist_loss_weight, s2_loss_weight, load_balance_loss_we
     # Generate aggregated expert heatmaps dynamically at the end of the evaluation phase
     if all_routing_probs and len(all_routing_probs) == len(all_preds):
         full_preds = torch.cat(all_preds, dim=0)
+        full_targets = torch.cat(all_targets, dim=0)
         full_probs = torch.cat(all_routing_probs, dim=0)
         full_distances = torch.cat(all_distances_tensors, dim=0)
         out_dir = f"visualizations_{run_name}/{epoch}/"
+
         save_expert_heatmaps(full_preds, full_probs, full_distances, out_dir)
+        save_error_flow_map(full_preds, full_targets, full_distances, out_dir)
 
     final_metrics_avg = {}
     if total_samples > 0:
