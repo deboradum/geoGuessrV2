@@ -415,3 +415,59 @@ def save_error_flow_map(predictions, targets, distances, output_dir, top_k=200):
     filepath = os.path.join(output_dir, "global_error_flow.png")
     plt.savefig(filepath, bbox_inches='tight', dpi=200)
     plt.close(fig)
+
+
+# Global cache so we only load the shapefile once during training
+_COUNTRY_RECORDS = None
+
+def get_continent(lon, lat):
+    """Maps a single (lon, lat) coordinate to a continent using Cartopy's offline Natural Earth data."""
+    global _COUNTRY_RECORDS
+    if _COUNTRY_RECORDS is None:
+        shpfilename = shpreader.natural_earth(resolution='110m', category='cultural', name='admin_0_countries')
+        _COUNTRY_RECORDS = list(shpreader.Reader(shpfilename).records())
+
+    pt = sgeom.Point(lon, lat)
+    for record in _COUNTRY_RECORDS:
+        if record.geometry.contains(pt):
+            return record.attributes.get('CONTINENT', 'Ocean/Unknown')
+    return "Ocean/Unknown"
+
+def save_continent_confusion_matrix(predictions, targets, output_dir):
+    """Generates a continent-level confusion matrix showing counts and percentages."""
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Convert Cartesian predictions to GCS
+    pred_x, pred_y, pred_z = predictions[:, 0], predictions[:, 1], predictions[:, 2]
+    pred_lat, pred_lon = cartesian_to_gcs_tensor(pred_x, pred_y, pred_z)
+    true_lon, true_lat = targets[:, 0], targets[:, 1]
+
+    # Map coordinates to continents
+    true_continents = [get_continent(lon, lat) for lon, lat in zip(true_lon.numpy(), true_lat.numpy())]
+    pred_continents = [get_continent(lon, lat) for lon, lat in zip(pred_lon.numpy(), pred_lat.numpy())]
+
+    # Get unique labels, dynamically excluding 'Ocean/Unknown' if it clutters the matrix
+    labels = sorted(list(set(true_continents + pred_continents)))
+    if "Ocean/Unknown" in labels and true_continents.count("Ocean/Unknown") < 10:
+        labels.remove("Ocean/Unknown")
+
+    # Compute Confusion Matrices
+    cm = confusion_matrix(true_continents, pred_continents, labels=labels)
+    # Normalize by row (true label) to get percentages for the heatmap color
+    cm_pct = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+    cm_pct = np.nan_to_num(cm_pct)
+
+    # Plot using Seaborn
+    fig, ax = plt.subplots(figsize=(10, 8))
+    sns.heatmap(cm_pct, annot=cm, fmt='d', cmap='Blues',
+                xticklabels=labels, yticklabels=labels, ax=ax,
+                cbar_kws={'label': 'Percentage of True Class Predicted'})
+
+    plt.ylabel('True Continent', fontsize=12, fontweight='bold')
+    plt.xlabel('Predicted Continent', fontsize=12, fontweight='bold')
+    plt.title('Continent-Level Confusion Matrix\n(Colors show row percentage, numbers show exact count)', pad=15)
+    plt.xticks(rotation=45, ha='right')
+
+    filepath = os.path.join(output_dir, "continent_confusion_matrix.png")
+    plt.savefig(filepath, bbox_inches='tight', dpi=150)
+    plt.close(fig)
