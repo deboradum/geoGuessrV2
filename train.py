@@ -77,7 +77,7 @@ def loss_fn(pred, target):
     }
 
 
-def evaluate(net, loader, dist_loss_weight, s2_loss_weight, load_balance_loss_weight, epoch: int|str, run_name: str, num_viz_batches: int):
+def evaluate(net, loader, dist_loss_weight, s2_loss_weight, load_balance_loss_weight, epoch: int|str, run_name: str, num_viz_batches: int, seen_classes=None):
     val_metrics_sums = defaultdict(float)
     total_samples = 0
     all_distances_tensors = []
@@ -118,6 +118,19 @@ def evaluate(net, loader, dist_loss_weight, s2_loss_weight, load_balance_loss_we
             pred_labels = torch.argmax(s2_logits, dim=1)
             correct = (pred_labels == y_s2).sum()
             batch_metrics["s2_accuracy"] = correct.float() / bs
+
+            s2_probs = F.softmax(s2_logits, dim=1)
+            batch_metrics["s2_entropy"] = -torch.sum(s2_probs * torch.log(s2_probs + 1e-8), dim=1).mean()
+
+            _, top5_preds = s2_logits.topk(5, dim=1)
+            batch_metrics["s2_top5_accuracy"] = top5_preds.eq(y_s2.view(-1, 1)).sum().float() / bs
+
+            _, top10_preds = s2_logits.topk(10, dim=1)
+            batch_metrics["s2_top10_accuracy"] = top10_preds.eq(y_s2.view(-1, 1)).sum().float() / bs
+
+            if seen_classes is not None:
+                is_unseen = ~torch.isin(y_s2, seen_classes)
+                batch_metrics["s2_unseen_ratio"] = is_unseen.sum().float() / bs
 
             aux_loss = load_metrics["load_balancing_loss"]
 
@@ -179,6 +192,7 @@ def train(
     test_loader: torch.utils.data.DataLoader,
     viz_batches: int = 1
 ):
+    seen_classes = torch.tensor(list(set(train_loader.dataset.all_labels)), device=device)
     best_distance = float('inf')
     best_state_dict = copy.deepcopy(net.state_dict())
     early_stop_counter = 0
@@ -187,7 +201,7 @@ def train(
     # Evaluate
     start = time.perf_counter()
     net.eval()
-    val_metrics, all_eval_distances = evaluate(net, eval_loader, config.dist_loss_weight, config.s2_loss_weight, config.load_balance_loss_weight, epoch="initial", run_name=config.run_name, num_viz_batches=viz_batches)
+    val_metrics, all_eval_distances = evaluate(net, eval_loader, config.dist_loss_weight, config.s2_loss_weight, config.load_balance_loss_weight, epoch="initial", run_name=config.run_name, num_viz_batches=viz_batches, seen_classes=seen_classes)
     net.train()
     taken = time.perf_counter() - start
     wandb.log(
@@ -198,6 +212,10 @@ def train(
             "eval/total_loss": val_metrics.get("total_loss", -1),
             "eval/s2_loss": val_metrics.get("s2_loss", -1),
             "eval/s2_accuracy": val_metrics.get("s2_accuracy", -1),
+            "eval/s2_entropy": val_metrics.get("s2_entropy", -1),
+            "eval/s2_top5_accuracy": val_metrics.get("s2_top5_accuracy", -1),
+            "eval/s2_top10_accuracy": val_metrics.get("s2_top10_accuracy", -1),
+            "eval/s2_unseen_ratio": val_metrics.get("s2_unseen_ratio", -1),
             "eval/load_balancing_loss": val_metrics.get("load_balancing_loss", -1),
             "eval/expert_load_cv": val_metrics.get("expert_load_cv", -1),
             "eval/dead_experts": val_metrics.get("dead_experts", -1),
@@ -232,7 +250,8 @@ def train(
         f"  dist loss:   {val_metrics.get('mse_loss', 0.0):.2f}\n"
         f"  aux loss:    {val_metrics.get('load_balancing_loss', 0.0):.2f}\n"
         f"  S2 loss:     {val_metrics.get('s2_loss', 0.0):.2f}\n"
-        f"  S2 acc:      {val_metrics.get('s2_accuracy', 0.0):.3f}\n"
+        f"  S2 acc (Top1/5/10): {val_metrics.get('s2_accuracy', 0.0):.3f} / {val_metrics.get('s2_top5_accuracy', 0.0):.3f} / {val_metrics.get('s2_top10_accuracy', 0.0):.3f}\n"
+        f"  S2 unseen ratio: {val_metrics.get('s2_unseen_ratio', 0.0):.3f}\n"
         f"  total loss:  {val_metrics.get('total_loss', 0.0):.2f}\n"
         f"  Score:       {val_metrics.get('score_avg', 0.0):,.2f} ± {val_metrics.get('score_std', 0.0):,.2f}\n"
         f"  Distance:    {val_metrics.get('distance_avg', 0.0):,.2f} ± {val_metrics.get('distance_std', 0.0):,.2f} km\n"
@@ -266,6 +285,16 @@ def train(
             pred_labels = torch.argmax(s2_logits, dim=1)
             correct = (pred_labels == y_s2).sum()
             batch_metrics["s2_accuracy"] = correct.float() / bs
+
+            with torch.no_grad():
+                s2_probs = F.softmax(s2_logits, dim=1)
+                batch_metrics["s2_entropy"] = -torch.sum(s2_probs * torch.log(s2_probs + 1e-8), dim=1).mean()
+
+                _, top5_preds = s2_logits.topk(5, dim=1)
+                batch_metrics["s2_top5_accuracy"] = top5_preds.eq(y_s2.view(-1, 1)).sum().float() / bs
+
+                _, top10_preds = s2_logits.topk(10, dim=1)
+                batch_metrics["s2_top10_accuracy"] = top10_preds.eq(y_s2.view(-1, 1)).sum().float() / bs
 
             aux_loss = load_metrics["load_balancing_loss"]
 
@@ -318,6 +347,9 @@ def train(
                         "train/s2_loss": train_metrics.get("s2_loss", -1),
                         "train/scaled_s2_loss": scaled_s2_loss,
                         "train/s2_accuracy": train_metrics.get("s2_accuracy", -1),
+                        "train/s2_entropy": train_metrics.get("s2_entropy", -1),
+                        "train/s2_top5_accuracy": train_metrics.get("s2_top5_accuracy", -1),
+                        "train/s2_top10_accuracy": train_metrics.get("s2_top10_accuracy", -1),
                         "train/expert_load_cv": train_metrics.get("expert_load_cv", -1),
                         "train/dead_experts": train_metrics.get("dead_experts", -1),
                         "train/router_prob_entropy": train_metrics.get("router_prob_entropy", -1),
@@ -369,7 +401,7 @@ def train(
         start = time.perf_counter()
         net.eval()
 
-        val_metrics, all_eval_distances = evaluate(net, eval_loader, config.dist_loss_weight, config.s2_loss_weight, config.load_balance_loss_weight, epoch=e, run_name=config.run_name, num_viz_batches=viz_batches)
+        val_metrics, all_eval_distances = evaluate(net, eval_loader, config.dist_loss_weight, config.s2_loss_weight, config.load_balance_loss_weight, epoch=e, run_name=config.run_name, num_viz_batches=viz_batches, seen_classes=seen_classes)
         net.train()
         taken = time.perf_counter() - start
         wandb.log(
@@ -380,6 +412,10 @@ def train(
                 "eval/s2_loss": val_metrics.get("s2_loss", -1),
                 "eval/total_loss": val_metrics.get("total_loss", -1),
                 "eval/s2_accuracy": val_metrics.get("s2_accuracy", -1),
+                "eval/s2_entropy": val_metrics.get("s2_entropy", -1),
+                "eval/s2_top5_accuracy": val_metrics.get("s2_top5_accuracy", -1),
+                "eval/s2_top10_accuracy": val_metrics.get("s2_top10_accuracy", -1),
+                "eval/s2_unseen_ratio": val_metrics.get("s2_unseen_ratio", -1),
                 "eval/load_balancing_loss": val_metrics.get("load_balancing_loss", -1),
                 "eval/expert_load_cv": val_metrics.get("expert_load_cv", -1),
                 "eval/dead_experts": val_metrics.get("dead_experts", -1),
@@ -414,7 +450,8 @@ def train(
             f"  dist loss:   {val_metrics.get('mse_loss', 0.0):.2f}\n"
             f"  aux loss:    {val_metrics.get('load_balancing_loss', 0.0):.2f}\n"
             f"  S2 loss:     {val_metrics.get('s2_loss', 0.0):.2f}\n"
-            f"  S2 acc:      {val_metrics.get('s2_accuracy', 0.0):.3f}\n"
+            f"  S2 acc (Top1/5/10): {val_metrics.get('s2_accuracy', 0.0):.3f} / {val_metrics.get('s2_top5_accuracy', 0.0):.3f} / {val_metrics.get('s2_top10_accuracy', 0.0):.3f}\n"
+            f"  S2 unseen ratio: {val_metrics.get('s2_unseen_ratio', 0.0):.3f}\n"
             f"  total loss:  {val_metrics.get('total_loss', 0.0):.2f}\n"
             f"  Score:       {val_metrics.get('score_avg', 0.0):,.2f} ± {val_metrics.get('score_std', 0.0):,.2f}\n"
             f"  Distance:    {val_metrics.get('distance_avg', 0.0):,.2f} ± {val_metrics.get('distance_std', 0.0):,.2f} km\n"
@@ -440,7 +477,7 @@ def train(
     # torch.save(best_state_dict, f"best_model_{config.run_name}.pth")
 
     net.eval()
-    return evaluate(net, test_loader, config.dist_loss_weight, config.s2_loss_weight, config.load_balance_loss_weight, epoch="test", run_name=config.run_name, num_viz_batches=max(1, viz_batches))
+    return evaluate(net, test_loader, config.dist_loss_weight, config.s2_loss_weight, config.load_balance_loss_weight, epoch="test", run_name=config.run_name, num_viz_batches=max(1, viz_batches), seen_classes=seen_classes)
 
 
 def get_args():
@@ -506,6 +543,10 @@ if __name__ == "__main__":
             "test/mse_loss": test_metrics.get("mse_loss", -1),
             "test/s2_loss": test_metrics.get("s2_loss", -1),
             "test/s2_accuracy": test_metrics.get("s2_accuracy", -1),
+            "test/s2_entropy": test_metrics.get("s2_entropy", -1),
+            "test/s2_top5_accuracy": test_metrics.get("s2_top5_accuracy", -1),
+            "test/s2_top10_accuracy": test_metrics.get("s2_top10_accuracy", -1),
+            "test/s2_unseen_ratio": test_metrics.get("s2_unseen_ratio", -1),
             "test/total_loss": test_metrics.get("total_loss", -1),
             "test/load_balancing_loss": test_metrics.get("load_balancing_loss", -1),
             "test/expert_load_cv": test_metrics.get("expert_load_cv", -1),
