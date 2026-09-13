@@ -454,7 +454,8 @@ def save_continent_confusion_matrix(predictions, targets, output_dir):
     # Compute Confusion Matrices
     cm = confusion_matrix(true_continents, pred_continents, labels=labels)
     # Normalize by row (true label) to get percentages for the heatmap color
-    cm_pct = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+    row_sums = cm.sum(axis=1)[:, np.newaxis]
+    cm_pct = cm.astype('float') / np.maximum(row_sums, 1)
     cm_pct = np.nan_to_num(cm_pct)
 
     # Plot using Seaborn
