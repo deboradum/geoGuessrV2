@@ -124,7 +124,7 @@ def get_loaders(directory: str="geoGuessrDataset/", s2_cell_level: int = 10) -> 
         [
             A.RandomCrop(height=900, width=900),
 
-            A.Affine(shift_limit=0.05, scale_limit=0.05, rotate_limit=10, p=0.3),
+            A.Affine(translate_percent=(-0.05, 0.05), scale=(0.95, 1.05), rotate=(-10, 10), p=0.3),
 
             A.Resize(height=256, width=256),
 
