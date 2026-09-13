@@ -384,7 +384,7 @@ def train(
                     f"  dist loss:   {train_metrics.get('distance_rad_avg', 0.0):.2f} ({train_metrics.get('distance_rad_avg', 0.0) * config.dist_loss_weight:.2f})\n"
                     f"  aux loss:    {train_metrics.get('load_balancing_loss', 0.0):.2f} ({train_metrics.get('load_balancing_loss', 0.0) * config.load_balance_loss_weight:.2f})\n"
                     f"  S2 loss:     {train_metrics.get('s2_loss', 0.0):.2f} ({train_metrics.get('s2_loss', 0.0) * config.s2_loss_weight:.2f})\n"
-                    f"  S2 acc:      {train_metrics.get('s2_accuracy', 0.0):.3f}\n"
+                    f"  S2 acc (Top1/5/10): {train_metrics.get('s2_accuracy', 0.0):.3f} / {train_metrics.get('s2_top5_accuracy', 0.0):.3f} / {train_metrics.get('s2_top10_accuracy', 0.0):.3f}\n"
                     f"  total loss:  {train_metrics.get('total_loss', 0.0):.2f}\n"
                     f"  Score:       {train_metrics.get('score_avg', 0.0):,.2f} ± {train_metrics.get('score_std', 0.0):,.2f}\n"
                     f"  Distance:    {train_metrics.get('distance_avg', 0.0):,.2f} ± {train_metrics.get('distance_std', 0.0):,.2f} km\n"
