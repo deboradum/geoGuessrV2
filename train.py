@@ -465,6 +465,10 @@ def train(
             best_distance = val_metrics["distance_avg"]
             best_state_dict = copy.deepcopy(net.state_dict())
             early_stop_counter = 0
+
+            checkpoint_path = f"best_model_{config.run_name}.pth"
+            torch.save(best_state_dict, checkpoint_path)
+            print(f" Saved new best model to {checkpoint_path} (Distance: {best_distance:,.2f} km)")
         else:
             early_stop_counter += 1
             if early_stop_counter > config.early_stop:
@@ -473,8 +477,6 @@ def train(
 
     # Load best model before test evaluation
     net.load_state_dict(best_state_dict)
-
-    # torch.save(best_state_dict, f"best_model_{config.run_name}.pth")
 
     net.eval()
     return evaluate(net, test_loader, config.dist_loss_weight, config.s2_loss_weight, config.load_balance_loss_weight, epoch="test", run_name=config.run_name, num_viz_batches=max(1, viz_batches), seen_classes=seen_classes)
