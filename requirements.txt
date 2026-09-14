@@ -1,0 +1,17 @@
+accelerate
+albumentations
+cartopy
+datasets
+matplotlib
+numpy
+pyyaml
+s2cell
+seaborn
+shapely
+torch
+torchaudio
+torchvision
+transformers
+scikit-learn
+scipy
+wandb
