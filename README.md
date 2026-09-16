@@ -6,4 +6,4 @@ UPDATE: I have created a new, larger dataset used for training. Find it [here](h
 
 See my blogpost about the project [here](https://pepijnvanwijk.nl/blog/260916/geocoords.html).
 
-See the trained model vit-s+!6, vit-b16 and vit-l16 checkpoints [here](https://huggingface.co/deboradum/GeoCoordinateGuessr).
+See the trained model vit-s+16, vit-b16 and vit-l16 checkpoints [here](https://huggingface.co/deboradum/GeoCoordinateGuessr).
