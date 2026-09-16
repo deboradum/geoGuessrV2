@@ -5,6 +5,7 @@ import torch
 import time
 import hashlib
 import numpy as np
+import torch.nn as nn
 import seaborn as sns
 import torch.nn.functional as F
 from sklearn.metrics import confusion_matrix
@@ -272,33 +273,75 @@ def save_expert_heatmaps(predictions, routing_probs, distances, output_dir):
     plt.close(fig)
 
 class ViTAttentionHook:
-    """Elegantly hooks into the last attention layer of standard ViTs (timm/torchvision)."""
+    """Hooks into the last attention layer and reconstructs weights to bypass FlashAttention/SDPA."""
     def __init__(self, model):
         self.attention = None
         self.hook_handle = None
-
-        # Dynamically find the last attention dropout layer (works for most ViT implementations)
         target_module = None
-        for name, module in model.named_modules():
-            if 'attn_drop' in name or ('self_attention' in name and 'dropout' in name):
-                target_module = module
+        target_name = ""
+
+        # Search backward through modules to find the last primary attention block
+        for name, module in reversed(list(model.named_modules())):
+            # Look for the main attention container (e.g., DINOv3ViTAttention)
+            if 'attention' in name.lower() or 'attn' in name.lower():
+                # Verify it's the actual attention mechanism by checking for Q/K projections
+                if hasattr(module, 'q_proj') or hasattr(module, 'qkv'):
+                    target_module = module
+                    target_name = name
+                    break
 
         if target_module is not None:
+            print(f"[Attention] Hooking onto: {target_name} ({target_module.__class__.__name__})")
             self.hook_handle = target_module.register_forward_hook(self._hook)
         else:
-            print("Warning: Could not auto-detect ViT attention layer for visualization.")
+            print("[Attention] Warning: Could not auto-detect ViT attention layer for visualization.")
 
     def _hook(self, module, input, output):
-        # The input to the attention dropout layer is the post-softmax attention matrix
-        # Shape: (Batch, Heads, SeqLen, SeqLen)
-        self.attention = input[0].detach()
+        x = input[0]
+        B, N, C = x.shape
+
+        # Manually compute QK^T attention to bypass PyTorch's non-materialized SDPA
+        if hasattr(module, 'q_proj') and hasattr(module, 'k_proj'):
+            q = module.q_proj(x)
+            k = module.k_proj(x)
+
+            # Infer heads (usually dim // 64 for standard ViTs/DINO)
+            num_heads = getattr(module, 'num_heads', getattr(module, 'num_attention_heads', C // 64))
+            head_dim = C // num_heads
+
+            # Reshape to (Batch, Heads, SeqLen, HeadDim)
+            q = q.view(B, N, num_heads, head_dim).transpose(1, 2)
+            k = k.view(B, N, num_heads, head_dim).transpose(1, 2)
+
+            # Compute Q @ K^T / sqrt(d)
+            scale = head_dim ** -0.5
+            attn = (q @ k.transpose(-2, -1)) * scale
+            self.attention = attn.softmax(dim=-1).detach()
+
+        elif hasattr(module, 'qkv'):
+            qkv = module.qkv(x)
+            num_heads = getattr(module, 'num_heads', getattr(module, 'num_attention_heads', C // 64))
+            head_dim = C // num_heads
+
+            # qkv is usually (Batch, SeqLen, 3 * Channels)
+            qkv = qkv.view(B, N, 3, num_heads, head_dim).permute(2, 0, 3, 1, 4)
+            q, k = qkv[0], qkv[1]
+
+            scale = head_dim ** -0.5
+            attn = (q @ k.transpose(-2, -1)) * scale
+            self.attention = attn.softmax(dim=-1).detach()
+        else:
+            # Fallback if standard extraction works
+            if isinstance(output, tuple) and len(output) > 1 and isinstance(output[1], torch.Tensor):
+                self.attention = output[1].detach()
 
     def remove(self):
         if self.hook_handle:
             self.hook_handle.remove()
 
-def save_attention_maps(images, model, output_dir, run_name):
-    """Generates and saves ViT attention heatmaps using a forward hook."""
+
+def save_attention_maps(images, targets, model, output_dir, run_name):
+    """Generates and saves ViT attention heatmaps alongside the original image using a forward hook."""
     os.makedirs(output_dir, exist_ok=True)
 
     hook = ViTAttentionHook(model)
@@ -306,57 +349,101 @@ def save_attention_maps(images, model, output_dir, run_name):
         _ = model(images)
 
     if hook.attention is None:
+        print("[Attention] Warning: Hook triggered but no attention matrix was captured.")
         hook.remove()
         return
 
     attn = hook.attention
 
-    # Get attention from the [CLS] token (index 0) to all patch tokens (index 1:)
-    cls_attn = attn[:, :, 0, 1:]  # (Batch, Heads, Patches)
-    cls_attn = cls_attn.mean(dim=1)  # Average across heads -> (Batch, Patches)
+    # Ensure it's 4D: (Batch, Heads, SeqLen, SeqLen)
+    if attn.ndim == 3:
+        attn = attn.unsqueeze(1)
 
-    # Reshape and Upsample
-    B, num_patches = cls_attn.shape
-    grid_size = int(math.sqrt(num_patches))
+    if attn.ndim != 4:
+        print(f"[Attention] Unexpected attention matrix shape: {attn.shape}. Skipping.")
+        hook.remove()
+        return
+
+    B, H, N, _ = attn.shape
+
+    # Dynamically figure out grid size by finding the largest perfect square
+    # that fits in the sequence (ignoring up to 20 special tokens like CLS + Registers)
+    grid_size = 0
+    num_patches = 0
+    num_special_tokens = 0
+
+    for g in range(int(math.sqrt(N)), 0, -1):
+        if g * g <= N:
+            if (N - g * g) < 20:
+                grid_size = g
+                num_patches = g * g
+                num_special_tokens = N - num_patches
+                break
+
+    if num_patches == 0:
+        print(f"[Attention] Could not infer square grid size from sequence length {N}. Skipping.")
+        hook.remove()
+        return
+
+    # Extract attention from the [CLS] token (index 0) to actual image patches
+    cls_attn = attn[:, :, 0, num_special_tokens:]  # (Batch, Heads, Patches)
+    cls_attn = cls_attn.mean(dim=1)  # Average across heads
     cls_attn = cls_attn.view(B, 1, grid_size, grid_size)
 
     # Normalize per image to [0, 1]
     cls_attn = cls_attn - cls_attn.view(B, -1).min(dim=1, keepdim=True)[0].view(B, 1, 1, 1)
-    cls_attn = cls_attn / cls_attn.view(B, -1).max(dim=1, keepdim=True)[0].view(B, 1, 1, 1)
+    cls_attn = cls_attn / (cls_attn.view(B, -1).max(dim=1, keepdim=True)[0].view(B, 1, 1, 1) + 1e-8)
 
+    # High-resolution bicubic upsampling to match image size
     img_size = images.shape[-1]
     attn_upsampled = F.interpolate(cls_attn, size=(img_size, img_size), mode='bicubic', align_corners=False)
 
-    # Denormalize images for plotting
+    # Denormalize input images for visualization
     mean = torch.tensor([0.485, 0.456, 0.406], device=images.device).view(1, 3, 1, 1)
     std = torch.tensor([0.229, 0.224, 0.225], device=images.device).view(1, 3, 1, 1)
     images_denorm = images * std + mean
     images_denorm = torch.clamp(images_denorm, 0, 1)
 
-    # Plot and Save
+    # Extract true coordinates for MD5 hashing
+    true_lon_deg, true_lat_deg = targets[:, 0], targets[:, 1]
+
+    # Plot and save side-by-side comparison
     for i in range(B):
         img_np = images_denorm[i].permute(1, 2, 0).cpu().numpy()
         heatmap = attn_upsampled[i, 0].cpu().numpy()
 
-        # Apply colormap to heatmap
+        # Apply Jet colormap to upsampled heatmap
         heatmap_colored = cm.jet(heatmap)[:, :, :3]
-        overlay = (img_np * 0.5) + (heatmap_colored * 0.5)
 
-        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        # Blend original image and heatmap (50/50 blend)
+        overlay = (img_np * 0.5) + (heatmap_colored * 0.5)
+        overlay = np.clip(overlay, 0, 1)
+
+        # Create side-by-side layout
+        fig, axes = plt.subplots(1, 2, figsize=(10, 5), dpi=300)
+
+        # Panel 1: Original Image
         axes[0].imshow(img_np)
-        axes[0].set_title("Original Image")
+        axes[0].set_title("Original Image", fontsize=12, pad=8)
         axes[0].axis('off')
 
-        axes[1].imshow(heatmap, cmap='jet')
-        axes[1].set_title("Attention Heatmap")
+        # Panel 2: Overlay
+        axes[1].imshow(overlay)
+        axes[1].set_title("Attention Overlay", fontsize=12, pad=8)
         axes[1].axis('off')
 
-        axes[2].imshow(overlay)
-        axes[2].set_title("Overlay")
-        axes[2].axis('off')
+        plt.tight_layout()
 
-        filepath = os.path.join(output_dir, f"attention_map_{i}.png")
-        plt.savefig(filepath, bbox_inches='tight', dpi=150)
+        # Generate hash filename identical to save_predictions logic
+        t_lon, t_lat = true_lon_deg[i].item(), true_lat_deg[i].item()
+        coord_string = f"{t_lon:.5f}_{t_lat:.5f}".encode('utf-8')
+        hash_str = hashlib.md5(coord_string).hexdigest()[:10]
+        filename = f"{hash_str}_overlay.png"
+
+        filepath = os.path.join(output_dir, filename)
+
+        # Save high-resolution plot
+        plt.savefig(filepath, bbox_inches='tight', dpi=300)
         plt.close(fig)
 
     hook.remove()
