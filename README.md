@@ -3,3 +3,6 @@ Predicting geo coordinates from an image. Training on a RTX-4070 and a custom da
 For this project I created the following [dataset](https://huggingface.co/datasets/deboradum/GeoCoordinates).
 
 UPDATE: I have created a new, larger dataset used for training. Find it [here](https://huggingface.co/datasets/deboradum/GeoCoordinates-large)
+
+See my blogpost about the project [here](https://pepijnvanwijk.nl/blog/260916/geocoords.html).
+
